@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+*.db
+*.sqlite
+.DS_Store
+.vscode/
+.idea/
+*.log
+npm
+*.env
+tsconfig.json
+.replit
+.replit.bak
