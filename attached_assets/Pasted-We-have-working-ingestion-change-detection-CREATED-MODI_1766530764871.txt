@@ -1,0 +1,50 @@
+We have working ingestion + change detection (CREATED / MODIFIED / RENAMED). Now implement FOUR MVP enhancements with minimal diffs and without breaking existing endpoints/dashboard:
+
+1) Deletion detection
+- If a document previously tracked in our DB for the configured folder is missing from the current Drive folder listing, record a changeType = 'deleted'.
+- Update document state accordingly (e.g., mark deletedAt or isDeleted=true). Do NOT hard-delete rows.
+- IMPORTANT: treat “moved out of folder” as deleted (since we only list one folder). If it reappears later, treat as created again unless we explicitly support move detection.
+
+2) Initial ingestion suppression (“baseline run”)
+- On the FIRST ingestion run for a folder, do not generate a flood of CREATED changes.
+- Instead, mark the run as baseline and store documents in DB with their hashes/versions, but create either:
+  a) zero change records, OR
+  b) one summary change record like "Baseline established: N documents indexed"
+- Define “first run” as: no prior ingestion run exists for that folder OR no documents exist in DB for that folder. Choose the simplest reliable condition.
+
+3) Attach change reason details
+- For every change record (created/modified/renamed/deleted), include a structured JSON "reason" object that explains why it was classified that way.
+- For MODIFIED: reason should indicate whether it was contentChanged, nameChanged, metadataChanged, etc.
+- For RENAMED: include oldName and newName.
+- For DELETED: include lastSeenAt and lastKnownName.
+- Keep existing dashboard response shape unchanged, but you may ADD optional fields safely. If dashboard shows only summary text now, keep it working.
+
+4) Change severity heuristic
+- Add a severity field to change records: 'low' | 'medium' | 'high'
+- Heuristic (MVP-simple):
+  - renamed => low
+  - deleted => medium (or high if you prefer; pick one and be consistent)
+  - created => medium
+  - modified:
+      - if contentChanged => high
+      - if only metadata/nameChanged => low
+- If we can detect contentChanged vs metadataChanged, use it. Otherwise default modified => high.
+
+Technical constraints:
+- Minimal changes, no broad refactor.
+- Do NOT change existing API routes; only extend payload fields if needed.
+- If using SQLite, add any required schema changes (e.g., new columns) and provide a safe dev approach:
+  - either ALTER TABLE migrations or note that dev DB can be recreated.
+- Concurrency protection must remain intact (no overlapping runs).
+- Add concise logging for: baseline run decision, deletion detection counts, and reasons.
+
+Acceptance tests to verify (must pass):
+A) Baseline: fresh DB + run ingestion -> documents saved, but no CREATED spam (or a single baseline summary record).
+B) Rename a tracked doc -> RENAMED with reason {oldName,newName} and severity low.
+C) Edit Google Doc text -> MODIFIED with reason {contentChanged:true} and severity high.
+D) Delete/move a tracked file out of folder -> DELETED with reason and severity medium/high.
+E) Next ingestion after deletion with no further changes -> no new change records.
+
+Deliverables:
+- List exact files changed and summarize DB/schema changes.
+- Show example changeRecord objects for each type (created/modified/renamed/deleted) including reason + severity.

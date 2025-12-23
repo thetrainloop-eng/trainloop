@@ -15,6 +15,8 @@ export interface Document {
   lastModified: string;
   currentVersionId: string;
   currentHash: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface DocumentVersion {
@@ -25,12 +27,27 @@ export interface DocumentVersion {
   createdAt: string;
 }
 
+export type ChangeSeverity = 'low' | 'medium' | 'high';
+
+export interface ChangeReason {
+  contentChanged?: boolean;
+  nameChanged?: boolean;
+  metadataChanged?: boolean;
+  oldName?: string;
+  newName?: string;
+  lastSeenAt?: string;
+  lastKnownName?: string;
+  baselineDocCount?: number;
+}
+
 export interface ChangeRecord {
   id: string;
-  documentId: string;
+  documentId?: string;
   previousVersionId?: string;
-  newVersionId: string;
-  changeType: 'created' | 'modified' | 'deleted' | 'renamed';
+  newVersionId?: string;
+  changeType: 'created' | 'modified' | 'deleted' | 'renamed' | 'baseline';
   detectedAt: string;
   summary?: string;
+  reason?: string;
+  severity?: ChangeSeverity;
 }

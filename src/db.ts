@@ -48,9 +48,15 @@ export class Database {
         lastModified TEXT NOT NULL,
         currentVersionId TEXT,
         currentHash TEXT NOT NULL,
-        createdAt TEXT NOT NULL
+        createdAt TEXT NOT NULL,
+        isDeleted INTEGER DEFAULT 0,
+        deletedAt TEXT
       )
     `);
+
+    // Add columns if they don't exist (for existing DBs)
+    await run(`ALTER TABLE documents ADD COLUMN isDeleted INTEGER DEFAULT 0`).catch(() => {});
+    await run(`ALTER TABLE documents ADD COLUMN deletedAt TEXT`).catch(() => {});
 
     // Document versions table
     await run(`
@@ -64,21 +70,27 @@ export class Database {
       )
     `);
 
-    // Change records table
+    // Change records table (documentId can be NULL for system-level records like baseline)
     await run(`
       CREATE TABLE IF NOT EXISTS change_records (
         id TEXT PRIMARY KEY,
-        documentId TEXT NOT NULL,
+        documentId TEXT,
         previousVersionId TEXT,
-        newVersionId TEXT NOT NULL,
+        newVersionId TEXT,
         changeType TEXT NOT NULL,
         detectedAt TEXT NOT NULL,
         summary TEXT,
+        reason TEXT,
+        severity TEXT,
         FOREIGN KEY (documentId) REFERENCES documents(id),
         FOREIGN KEY (previousVersionId) REFERENCES document_versions(id),
         FOREIGN KEY (newVersionId) REFERENCES document_versions(id)
       )
     `);
+
+    // Add columns if they don't exist (for existing DBs)
+    await run(`ALTER TABLE change_records ADD COLUMN reason TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN severity TEXT`).catch(() => {});
 
     // Auth tokens table (stores Google OAuth token)
     await run(`
@@ -229,6 +241,33 @@ export class Database {
     });
   }
 
+  async getActiveDocuments(): Promise<Document[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all('SELECT * FROM documents WHERE isDeleted = 0 OR isDeleted IS NULL', (err, rows) => {
+        if (err) reject(err);
+        else resolve((rows as any[]) || []);
+      });
+    });
+  }
+
+  async getActiveDocumentCount(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.db.get('SELECT COUNT(*) as count FROM documents WHERE isDeleted = 0 OR isDeleted IS NULL', (err, row: any) => {
+        if (err) reject(err);
+        else resolve(row?.count || 0);
+      });
+    });
+  }
+
+  async getTotalDocumentCount(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.db.get('SELECT COUNT(*) as count FROM documents', (err, row: any) => {
+        if (err) reject(err);
+        else resolve(row?.count || 0);
+      });
+    });
+  }
+
   async createDocumentVersion(version: DocumentVersion): Promise<void> {
     const stmt = this.db.prepare(
       `INSERT INTO document_versions (id, documentId, hash, content, createdAt)
@@ -262,14 +301,25 @@ export class Database {
 
   async createChangeRecord(record: ChangeRecord): Promise<void> {
     const stmt = this.db.prepare(
-      `INSERT INTO change_records (id, documentId, previousVersionId, newVersionId, changeType, detectedAt, summary)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO change_records (id, documentId, previousVersionId, newVersionId, changeType, detectedAt, summary, reason, severity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     return new Promise((resolve, reject) => {
-      stmt.run(record.id, record.documentId, record.previousVersionId, record.newVersionId, record.changeType, record.detectedAt, record.summary, function(err: Error | null) {
-        if (err) reject(err);
-        else resolve();
-      });
+      stmt.run(
+        record.id,
+        record.documentId || null, // allow NULL for system-level records (baseline)
+        record.previousVersionId || null,
+        record.newVersionId || null,
+        record.changeType,
+        record.detectedAt,
+        record.summary || null,
+        record.reason || null,
+        record.severity || null,
+        function(err: Error | null) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
     });
   }
 

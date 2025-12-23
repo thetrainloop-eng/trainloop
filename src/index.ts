@@ -5,7 +5,7 @@ import { db } from './db';
 import { googleDriveService } from './services/googleDrive';
 import { schedulerService } from './services/scheduler';
 import { authManager } from './auth';
-import { ChangeRecord, DocumentVersion, IngestionRun } from './types';
+import { ChangeRecord, ChangeReason, DocumentVersion, IngestionRun } from './types';
 import fs from 'fs';
 import path from 'path';
 
@@ -317,7 +317,7 @@ app.get('/api/scheduler/status', (req: Request, res: Response) => {
   });
 });
 
-// Ingestion logic
+// Ingestion logic with baseline detection, deletion detection, reasons, and severity
 async function startIngestion(runId: string, googleDriveFolderId: string): Promise<void> {
   try {
     console.log(`\n🚀 Starting ingestion run ${runId} for folder ${googleDriveFolderId}`);
@@ -334,21 +334,24 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
     
     await db.updateIngestionRun(runId, { status: 'in_progress' });
 
+    // Check if this is a baseline run (no documents exist at all, including deleted ones)
+    // This ensures baseline only happens on the truly first ingestion ever
+    const totalDocCount = await db.getTotalDocumentCount();
+    const isBaselineRun = totalDocCount === 0;
+    if (isBaselineRun) {
+      console.log('📋 BASELINE RUN: First ingestion ever - will suppress individual CREATED records');
+    }
+
     // Fetch files from Google Drive folder
     console.log('📥 Fetching files from Google Drive...');
     const files = await googleDriveService.listFiles(googleDriveFolderId);
     console.log(`📦 Received ${files.length} files from Google Drive`);
 
-    if (files.length === 0) {
-      await db.updateIngestionRun(runId, {
-        status: 'completed',
-        documentsProcessed: 0,
-        changesDetected: 0,
-      });
-      return;
-    }
+    // Build set of current Google Drive IDs for deletion detection
+    const currentDriveIds = new Set<string>();
 
     let changesDetected = 0;
+    let docsProcessed = 0;
 
     for (const file of files) {
       // Filter for supported document types
@@ -362,7 +365,10 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
         continue;
       }
 
-      // Download and extract content (placeholder)
+      currentDriveIds.add(file.id);
+      docsProcessed++;
+
+      // Download and extract content
       const content = await extractContent(file);
 
       if (!content) {
@@ -377,7 +383,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
       // Log file details for debugging
       console.log(`  📊 Processing: ${file.name} | mime: ${file.mimeType} | content length: ${content.length} | hash: ${hash.substring(0, 20)}...`);
 
-      // Check if document exists
+      // Check if document exists (including soft-deleted ones that reappeared)
       let document = await db.getDocumentByGoogleDriveId(file.id);
 
       if (!document) {
@@ -407,24 +413,57 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
 
         await db.createDocumentVersion(version);
 
-        const changeRecord: ChangeRecord = {
-          id: googleDriveService.generateId(),
-          documentId: docId,
-          newVersionId: versionId,
-          changeType: 'created',
-          detectedAt: new Date().toISOString(),
-          summary: `Document "${file.name}" added to the system`,
-        };
+        // Only create CREATED change record if not a baseline run
+        if (!isBaselineRun) {
+          const reason: ChangeReason = {};
+          const changeRecord: ChangeRecord = {
+            id: googleDriveService.generateId(),
+            documentId: docId,
+            newVersionId: versionId,
+            changeType: 'created',
+            detectedAt: new Date().toISOString(),
+            summary: `Document "${file.name}" added to the system`,
+            reason: JSON.stringify(reason),
+            severity: 'medium',
+          };
 
-        await db.createChangeRecord(changeRecord);
-        changesDetected++;
+          await db.createChangeRecord(changeRecord);
+          changesDetected++;
+        }
       } else {
-        // Existing document - check for rename and/or content change
+        // Document exists - check if it was previously deleted (reappeared)
+        if (document.isDeleted) {
+          console.log(`  🔄 Document reappeared: ${file.name}`);
+          await db.updateDocument(document.id, { isDeleted: false, deletedAt: undefined } as any);
+          
+          if (!isBaselineRun) {
+            const reason: ChangeReason = {};
+            const changeRecord: ChangeRecord = {
+              id: googleDriveService.generateId(),
+              documentId: document.id,
+              newVersionId: document.currentVersionId,
+              changeType: 'created',
+              detectedAt: new Date().toISOString(),
+              summary: `Document "${file.name}" reappeared in the folder`,
+              reason: JSON.stringify(reason),
+              severity: 'medium',
+            };
+            await db.createChangeRecord(changeRecord);
+            changesDetected++;
+          }
+        }
+
+        // Check for rename and/or content change
         const renamed = file.name !== document.fileName;
         const contentChanged = hash !== document.currentHash;
 
         if (renamed) {
           console.log(`  🏷️  Rename detected: "${document.fileName}" -> "${file.name}"`);
+          const reason: ChangeReason = {
+            nameChanged: true,
+            oldName: document.fileName,
+            newName: file.name,
+          };
           const renameRecord: ChangeRecord = {
             id: googleDriveService.generateId(),
             documentId: document.id,
@@ -432,6 +471,8 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
             changeType: 'renamed',
             detectedAt: new Date().toISOString(),
             summary: `Document renamed from "${document.fileName}" to "${file.name}"`,
+            reason: JSON.stringify(reason),
+            severity: 'low',
           };
           await db.createChangeRecord(renameRecord);
           await db.updateDocument(document.id, { fileName: file.name, lastModified: file.modifiedTime });
@@ -452,6 +493,9 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
 
           await db.createDocumentVersion(version);
 
+          const reason: ChangeReason = {
+            contentChanged: true,
+          };
           const changeRecord: ChangeRecord = {
             id: googleDriveService.generateId(),
             documentId: document.id,
@@ -460,6 +504,8 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
             changeType: 'modified',
             detectedAt: new Date().toISOString(),
             summary: `Document "${file.name}" content has changed`,
+            reason: JSON.stringify(reason),
+            severity: 'high',
           };
 
           await db.createChangeRecord(changeRecord);
@@ -475,9 +521,61 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
       }
     }
 
+    // DELETION DETECTION: Find documents that are in DB but not in current folder listing
+    const activeDocuments = await db.getActiveDocuments();
+    let deletedCount = 0;
+    for (const doc of activeDocuments) {
+      if (!currentDriveIds.has(doc.googleDriveId)) {
+        console.log(`  🗑️  Deletion detected: ${doc.fileName} (no longer in folder)`);
+        const now = new Date().toISOString();
+        
+        const reason: ChangeReason = {
+          lastSeenAt: doc.lastModified,
+          lastKnownName: doc.fileName,
+        };
+        const deleteRecord: ChangeRecord = {
+          id: googleDriveService.generateId(),
+          documentId: doc.id,
+          previousVersionId: doc.currentVersionId,
+          changeType: 'deleted',
+          detectedAt: now,
+          summary: `Document "${doc.fileName}" removed from folder or deleted`,
+          reason: JSON.stringify(reason),
+          severity: 'medium',
+        };
+        await db.createChangeRecord(deleteRecord);
+        await db.updateDocument(doc.id, { isDeleted: true, deletedAt: now } as any);
+        
+        changesDetected++;
+        deletedCount++;
+      }
+    }
+    if (deletedCount > 0) {
+      console.log(`📊 Deletion detection: ${deletedCount} documents marked as deleted`);
+    }
+
+    // Create baseline summary record if this was a baseline run
+    if (isBaselineRun && docsProcessed > 0) {
+      const reason: ChangeReason = {
+        baselineDocCount: docsProcessed,
+      };
+      const baselineRecord: ChangeRecord = {
+        id: googleDriveService.generateId(),
+        // documentId is undefined/null for system-level baseline records
+        changeType: 'baseline',
+        detectedAt: new Date().toISOString(),
+        summary: `Baseline established: ${docsProcessed} documents indexed`,
+        reason: JSON.stringify(reason),
+        severity: 'low',
+      };
+      await db.createChangeRecord(baselineRecord);
+      changesDetected = 1;
+      console.log(`📋 Baseline record created: ${docsProcessed} documents indexed`);
+    }
+
     await db.updateIngestionRun(runId, {
       status: 'completed',
-      documentsProcessed: files.length,
+      documentsProcessed: docsProcessed,
       changesDetected,
     });
   } catch (error) {
