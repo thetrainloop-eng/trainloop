@@ -8,6 +8,7 @@ export interface GoogleDriveFile {
   name: string;
   mimeType: string;
   modifiedTime: string;
+  md5Checksum?: string; // ✅ add
 }
 
 export class GoogleDriveService {
@@ -31,7 +32,7 @@ export class GoogleDriveService {
 
     try {
       const query = `'${folderId}' in parents and trashed=false`;
-      const fieldsParam = 'files(id,name,mimeType,modifiedTime)';
+      const fieldsParam = 'files(id,name,mimeType,modifiedTime,md5Checksum)';
       const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive&fields=${encodeURIComponent(fieldsParam)}`;
       
       const response = await fetch(url, {
@@ -65,6 +66,29 @@ export class GoogleDriveService {
       console.error('❌ Error listing Google Drive files:', error);
     }
   }
+  async exportGoogleDocText(fileId: string): Promise<string | null> {
+  if (!this.accessToken) {
+    console.warn('Google Drive access token not set.');
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Export error: ${response.status} ${response.statusText} - ${errorBody}`);
+    }
+
+    return await response.text();
+  } catch (err) {
+    console.error('Error exporting Google Doc as text:', err);
+    return null;
+  }
+}
 
   async downloadFile(fileId: string): Promise<Buffer | null> {
     if (!this.accessToken) {
@@ -91,8 +115,9 @@ export class GoogleDriveService {
       console.error('Error downloading from Google Drive:', error);
       return null;
     }
+    
   }
-
+ 
   computeHash(content: string): string {
     return createHash('sha256').update(content).digest('hex');
   }

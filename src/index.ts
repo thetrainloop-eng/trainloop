@@ -251,7 +251,11 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
       }
 
       // Compute hash
-      const hash = file.md5Checksum ?? googleDriveService.computeHash(content);
+      const hash =
+  file.md5Checksum
+    ? `md5:${file.md5Checksum}`
+    : `sha256:${googleDriveService.computeHash(content)}`;
+
 
       // Check if document exists
       let document = await db.getDocumentByGoogleDriveId(file.id);
@@ -291,7 +295,10 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
           detectedAt: new Date().toISOString(),
           summary: `Document "${file.name}" added to the system`,
         };
-
+      if (file.name !== document.fileName) {
+         await db.updateDocument(document.id, { fileName: file.name });
+        // (optional) create a changeRecord with changeType: 'renamed'
+        };
         await db.createChangeRecord(changeRecord);
         changesDetected++;
       } else if (hash !== document.currentHash) {
@@ -347,24 +354,29 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
 // Modified content extraction
 async function extractContent(file: any): Promise<string> {
   try {
-    // Google Docs: export real text content
     if (file.mimeType === 'application/vnd.google-apps.document') {
       const text = await googleDriveService.exportGoogleDocText(file.id);
       return text ?? '';
     }
+    if (file.mimeType === 'application/vnd.google-apps.document') {
+  const text = await googleDriveService.exportGoogleDocText(file.id);
+  console.log('DOC EXPORT', file.name, 'len=', text?.length ?? 0);
+  return text ?? '';
+}
+    if (file.mimeType === 'application/vnd.google-apps.document') {
+  const text = await googleDriveService.exportGoogleDocText(file.id);
+  console.log(
+    'DOC EXPORT:',
+    file.name,
+    'length:',
+    text?.length ?? 0
+  );
+  return text ?? '';
+}
 
-    // PDF placeholder (content parsing later)
-    if (file.mimeType === 'application/pdf') {
-      return '[PDF Content Placeholder]';
-    }
-
-    // DOCX placeholder (content parsing later)
-    if (
-      file.mimeType ===
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ) {
-      return '[DOCX Content Placeholder]';
-    }
+    if (file.mimeType === 'application/pdf') return '[PDF Placeholder]';
+    if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+      return '[DOCX Placeholder]';
   } catch (error) {
     console.error(`Error extracting content from ${file.id}:`, error);
   }
