@@ -90,6 +90,19 @@ export class Database {
         updatedAt TEXT NOT NULL
       )
     `);
+
+    // Scheduler config table
+    await run(`
+      CREATE TABLE IF NOT EXISTS scheduler_config (
+        key TEXT PRIMARY KEY,
+        enabled INTEGER DEFAULT 0,
+        intervalMinutes INTEGER DEFAULT 60,
+        folderId TEXT,
+        lastRun TEXT,
+        nextRun TEXT,
+        updatedAt TEXT NOT NULL
+      )
+    `);
   }
 
   async saveAccessToken(accessToken: string, expiryTime: number, refreshToken?: string): Promise<void> {
@@ -271,6 +284,90 @@ export class Database {
         if (err) reject(err);
         else resolve((rows as any[]) || []);
       });
+    });
+  }
+
+  async saveSchedulerConfig(config: {
+    enabled: boolean;
+    intervalMinutes: number;
+    folderId: string | null;
+    lastRun: string | null;
+    nextRun: string | null;
+  }): Promise<void> {
+    const stmt = this.db.prepare(
+      `INSERT OR REPLACE INTO scheduler_config (key, enabled, intervalMinutes, folderId, lastRun, nextRun, updatedAt)
+       VALUES ('default', ?, ?, ?, ?, ?, ?)`
+    );
+    return new Promise((resolve, reject) => {
+      stmt.run(
+        config.enabled ? 1 : 0,
+        config.intervalMinutes,
+        config.folderId,
+        config.lastRun,
+        config.nextRun,
+        new Date().toISOString(),
+        function(err: Error | null) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+  }
+
+  async getSchedulerConfig(): Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    folderId: string | null;
+    lastRun: string | null;
+    nextRun: string | null;
+  } | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        `SELECT enabled, intervalMinutes, folderId, lastRun, nextRun FROM scheduler_config WHERE key = 'default'`,
+        (err, row: any) => {
+          if (err) reject(err);
+          else if (row) {
+            resolve({
+              enabled: row.enabled === 1,
+              intervalMinutes: row.intervalMinutes,
+              folderId: row.folderId,
+              lastRun: row.lastRun,
+              nextRun: row.nextRun,
+            });
+          } else {
+            resolve(null);
+          }
+        }
+      );
+    });
+  }
+
+  async getLatestIngestionRun(): Promise<IngestionRun | null> {
+    return new Promise((resolve, reject) => {
+      this.db.get(
+        'SELECT * FROM ingestion_runs ORDER BY createdAt DESC LIMIT 1',
+        (err, row) => {
+          if (err) reject(err);
+          else resolve((row as IngestionRun) || null);
+        }
+      );
+    });
+  }
+
+  async getRecentChanges(limit: number = 20): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        `SELECT cr.*, d.fileName 
+         FROM change_records cr 
+         LEFT JOIN documents d ON cr.documentId = d.id 
+         ORDER BY cr.detectedAt DESC 
+         LIMIT ?`,
+        [limit],
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve((rows as any[]) || []);
+        }
+      );
     });
   }
 

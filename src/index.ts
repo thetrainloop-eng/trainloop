@@ -3,6 +3,7 @@ import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { googleDriveService } from './services/googleDrive';
+import { schedulerService } from './services/scheduler';
 import { authManager } from './auth';
 import { ChangeRecord, DocumentVersion, IngestionRun } from './types';
 import fs from 'fs';
@@ -20,15 +21,34 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialize database and load persistent auth token
+// Initialize database, auth, and scheduler
 (async () => {
   try {
     await db.initialize();
     await authManager.loadAccessTokenFromDatabase();
+    
+    // Initialize scheduler with ingestion callback
+    schedulerService.setIngestionCallback(async (runId: string, folderId: string) => {
+      await runIngestionForScheduler(runId, folderId);
+    });
+    await schedulerService.initialize();
   } catch (error) {
     console.error('Failed to initialize:', error);
   }
 })();
+
+// Wrapper for scheduler to run ingestion
+async function runIngestionForScheduler(runId: string, folderId: string): Promise<void> {
+  const run: IngestionRun = {
+    id: runId,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+    documentsProcessed: 0,
+    changesDetected: 0,
+  };
+  await db.createIngestionRun(run);
+  await startIngestion(runId, folderId);
+}
 
 // List Drive Files
 app.get("/drive/files", async (req, res) => {
@@ -195,6 +215,106 @@ app.get('/api/change-records', async (req: Request, res: Response) => {
     console.error('Error fetching change records:', error);
     res.status(500).json({ error: 'Failed to fetch change records' });
   }
+});
+
+// Dashboard status endpoint - aggregates all status info
+app.get('/api/dashboard', async (req: Request, res: Response) => {
+  try {
+    const connected = await authManager.isAuthenticated();
+    const scheduler = schedulerService.getConfig();
+    const lastRun = await db.getLatestIngestionRun();
+    const recentChanges = await db.getRecentChanges(10);
+    const documents = await db.getAllDocuments();
+    
+    res.json({
+      googleDrive: {
+        connected,
+        folderId: scheduler.folderId || process.env.DRIVE_FOLDER_ID || null,
+      },
+      scheduler: {
+        enabled: scheduler.enabled,
+        intervalMinutes: scheduler.intervalMinutes,
+        lastRun: scheduler.lastRun,
+        nextRun: scheduler.nextRun,
+      },
+      lastIngestion: lastRun ? {
+        id: lastRun.id,
+        status: lastRun.status,
+        createdAt: lastRun.createdAt,
+        documentsProcessed: lastRun.documentsProcessed,
+        changesDetected: lastRun.changesDetected,
+      } : null,
+      stats: {
+        totalDocuments: documents.length,
+        recentChanges: recentChanges.length,
+      },
+      recentChanges,
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard data' });
+  }
+});
+
+// Scheduler API endpoints
+app.get('/api/scheduler', (req: Request, res: Response) => {
+  res.json(schedulerService.getConfig());
+});
+
+app.post('/api/scheduler', async (req: Request, res: Response) => {
+  try {
+    const { enabled, intervalMinutes, folderId } = req.body;
+    const updates: any = {};
+    
+    if (typeof enabled === 'boolean') updates.enabled = enabled;
+    if (typeof intervalMinutes === 'number' && intervalMinutes >= 1) updates.intervalMinutes = intervalMinutes;
+    if (typeof folderId === 'string') updates.folderId = folderId;
+    
+    const config = await schedulerService.updateConfig(updates);
+    res.json(config);
+  } catch (error) {
+    console.error('Error updating scheduler:', error);
+    res.status(500).json({ error: 'Failed to update scheduler' });
+  }
+});
+
+app.post('/api/scheduler/start', async (req: Request, res: Response) => {
+  try {
+    schedulerService.start();
+    res.json(schedulerService.getConfig());
+  } catch (error) {
+    console.error('Error starting scheduler:', error);
+    res.status(500).json({ error: 'Failed to start scheduler' });
+  }
+});
+
+app.post('/api/scheduler/stop', (req: Request, res: Response) => {
+  schedulerService.stop();
+  res.json(schedulerService.getConfig());
+});
+
+app.post('/api/scheduler/run-now', async (req: Request, res: Response) => {
+  try {
+    const result = await schedulerService.runNow();
+    if (result.runId) {
+      res.json({ success: true, runId: result.runId });
+    } else if (result.error === 'Ingestion already in progress') {
+      res.status(409).json({ error: result.error, inProgress: true });
+    } else {
+      res.status(400).json({ error: result.error || 'Cannot run: No folder configured' });
+    }
+  } catch (error) {
+    console.error('Error running scheduled ingestion:', error);
+    res.status(500).json({ error: 'Failed to run ingestion' });
+  }
+});
+
+// Check if ingestion is currently running
+app.get('/api/scheduler/status', (req: Request, res: Response) => {
+  res.json({
+    ...schedulerService.getConfig(),
+    ingestionInProgress: schedulerService.isIngestionRunning(),
+  });
 });
 
 // Ingestion logic
