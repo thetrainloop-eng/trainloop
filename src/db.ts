@@ -85,32 +85,33 @@ export class Database {
       CREATE TABLE IF NOT EXISTS auth_tokens (
         key TEXT PRIMARY KEY,
         accessToken TEXT,
+        refreshToken TEXT,
         expiryTime INTEGER,
         updatedAt TEXT NOT NULL
       )
     `);
   }
 
-  async saveAccessToken(accessToken: string, expiryTime: number): Promise<void> {
+  async saveAccessToken(accessToken: string, expiryTime: number, refreshToken?: string): Promise<void> {
     const stmt = this.db.prepare(
-      `INSERT OR REPLACE INTO auth_tokens (key, accessToken, expiryTime, updatedAt)
-       VALUES ('google_oauth', ?, ?, ?)`
+      `INSERT OR REPLACE INTO auth_tokens (key, accessToken, refreshToken, expiryTime, updatedAt)
+       VALUES ('google_oauth', ?, ?, ?, ?)`
     );
     return new Promise((resolve, reject) => {
-      stmt.run(accessToken, expiryTime, new Date().toISOString(), function(err: Error | null) {
+      stmt.run(accessToken, refreshToken || null, expiryTime, new Date().toISOString(), function(err: Error | null) {
         if (err) reject(err);
         else resolve();
       });
     });
   }
 
-  async loadAccessToken(): Promise<{ token: string; expiryTime: number } | null> {
+  async loadAccessToken(): Promise<{ token: string; refreshToken: string | null; expiryTime: number } | null> {
     return new Promise((resolve, reject) => {
       this.db.get(
-        `SELECT accessToken, expiryTime FROM auth_tokens WHERE key = 'google_oauth'`,
+        `SELECT accessToken, refreshToken, expiryTime FROM auth_tokens WHERE key = 'google_oauth'`,
         (err, row: any) => {
           if (err) reject(err);
-          else if (row) resolve({ token: row.accessToken, expiryTime: row.expiryTime });
+          else if (row) resolve({ token: row.accessToken, refreshToken: row.refreshToken, expiryTime: row.expiryTime });
           else resolve(null);
         }
       );

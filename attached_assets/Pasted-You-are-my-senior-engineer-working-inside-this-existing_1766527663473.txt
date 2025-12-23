@@ -1,0 +1,29 @@
+You are my senior engineer working inside this existing repo (do NOT start a new project). 
+First: inspect the repository structure and current scripts. Summarize what exists (frontend, backend, auth, ingestion). 
+Second: run the app locally in Replit (use the repo’s existing start scripts). Fix only what is required to get it running.
+Third: continue implementation of TrainLoop MVP with the smallest possible diffs.
+
+Project context:
+- TrainLoop ingests a Google Drive folder and tracks policy/procedure documents.
+- MVP must support: (1) Google OAuth login/connect Drive, (2) ingest files from a selected folder, (3) store file metadata + content hash/signature, (4) detect changes on subsequent ingestions (added/modified/deleted), (5) “Scheduled Ingestion” (cron-like) must be in MVP, (6) UI can be minimal (status + last run + changes list).
+- Current known content extraction: Google Docs should be exported as text. PDFs/DOCX can be placeholders for now (don’t build OCR).
+- Keep architecture: Node/Express + TypeScript backend, React + TypeScript + Vite frontend. Use existing patterns in the repo.
+
+Hard constraints:
+- DO NOT rewrite large chunks of code. No refactors unless essential.
+- Make changes in small, reviewable commits (group by purpose).
+- If you need environment variables, list them explicitly and where to set them in Replit Secrets.
+- Do NOT commit secrets. Ensure .env is gitignored.
+- When you change something, explain: what broke, why, and how your fix works.
+
+Immediate task:
+1) Verify Google Drive connector works end-to-end: connect -> list files in target folder -> ingest.
+2) Implement change detection using stored signatures (e.g., modifiedTime + size + checksum if available; for Google Docs use export text hash).
+3) Add a scheduled ingestion mechanism that runs automatically at an interval (configurable), and logs runs.
+4) Add a simple UI page showing: connection status, configured folder, last ingestion time, and detected changes.
+
+Output format:
+- Start with “Repo summary”
+- Then “Current run status”
+- Then “Plan (next 5 steps)”
+- Then implement step 1 and show the exact files changed.

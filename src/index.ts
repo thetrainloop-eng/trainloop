@@ -1,6 +1,4 @@
 import "dotenv/config"
-import { google } from "googleapis";
-import { getOAuthClient, saveTokens } from "./googleAuth";
 import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
@@ -35,7 +33,7 @@ if (!fs.existsSync(dataDir)) {
 // List Drive Files
 app.get("/drive/files", async (req, res) => {
   try {
-    if (!authManager.isAuthenticated()) {
+    if (!(await authManager.isAuthenticated())) {
       return res.status(401).json({ error: "Not authenticated. Visit /auth/google first." });
     }
 
@@ -54,11 +52,12 @@ app.get("/drive/files", async (req, res) => {
 });
 
 // Health check
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', async (req: Request, res: Response) => {
+  const connected = await authManager.isAuthenticated();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    googleDriveConnected: authManager.isAuthenticated(),
+    googleDriveConnected: connected,
   });
 });
 
@@ -204,7 +203,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
     console.log(`\n🚀 Starting ingestion run ${runId} for folder ${googleDriveFolderId}`);
     
     // Check if authenticated
-    if (!authManager.isAuthenticated()) {
+    if (!(await authManager.isAuthenticated())) {
       console.error('❌ Not authenticated with Google Drive. Cannot start ingestion.');
       await db.updateIngestionRun(runId, {
         status: 'failed',

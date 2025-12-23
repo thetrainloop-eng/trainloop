@@ -7,6 +7,7 @@ const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URL || 'http://localhost:5000/a
 
 export interface GoogleTokenResponse {
   access_token: string;
+  refresh_token?: string;
   expires_in: number;
   token_type: string;
 }
@@ -16,6 +17,7 @@ export class AuthManager {
   private tokenExpiry: number = 0;
   private refreshToken: string | null = null;
   private initialized = false;
+  private refreshing = false;
 
   getAuthUrl(): string {
     const params = new URLSearchParams({
@@ -46,27 +48,63 @@ export class AuthManager {
     }
 
     const data = (await response.json()) as any;
-    await this.setAccessToken(data.access_token);
-    if (data.refresh_token) {
-      this.refreshToken = data.refresh_token;
-      console.log('✅ Refresh token stored for token renewal');
-    }
+    await this.setAccessToken(data.access_token, data.refresh_token);
     return data;
   }
 
-  async setAccessToken(token: string): Promise<void> {
+  async setAccessToken(token: string, refreshToken?: string): Promise<void> {
     this.accessToken = token;
     this.tokenExpiry = Date.now() + 3600000; // 1 hour expiry
+    if (refreshToken) {
+      this.refreshToken = refreshToken;
+    }
     googleDriveService.setAccessToken(token);
     
     // Persist to database
     try {
-      await db.saveAccessToken(token, this.tokenExpiry);
+      await db.saveAccessToken(token, this.tokenExpiry, refreshToken);
       console.log('✅ Google Drive access token set (expires in ~1 hour)');
       console.log(`   Token preview: ${token.substring(0, 20)}...`);
+      if (refreshToken) console.log('💾 Refresh token saved');
       console.log('💾 Token persisted to database');
     } catch (error) {
       console.error('⚠️  Failed to persist token:', error);
+    }
+  }
+
+  private async refreshAccessToken(): Promise<boolean> {
+    if (!this.refreshToken || this.refreshing) {
+      return false;
+    }
+
+    this.refreshing = true;
+    try {
+      console.log('🔄 Attempting to refresh access token...');
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: this.refreshToken,
+          grant_type: 'refresh_token',
+        }).toString(),
+      });
+
+      if (!response.ok) {
+        console.error('⚠️  Token refresh failed');
+        return false;
+      }
+
+      const data = (await response.json()) as any;
+      await this.setAccessToken(data.access_token, this.refreshToken);
+      console.log('✅ Access token refreshed successfully');
+      return true;
+    } catch (error) {
+      console.error('⚠️  Error refreshing token:', error);
+      return false;
+    } finally {
+      this.refreshing = false;
     }
   }
 
@@ -75,15 +113,21 @@ export class AuthManager {
     
     try {
       const stored = await db.loadAccessToken();
-      if (stored && stored.expiryTime > Date.now()) {
-        this.accessToken = stored.token;
-        this.tokenExpiry = stored.expiryTime;
-        googleDriveService.setAccessToken(stored.token);
-        console.log('✅ Loaded persistent Google Drive access token from database');
-        console.log(`   Token preview: ${stored.token.substring(0, 20)}...`);
-        console.log(`   Expires in: ${Math.floor((stored.expiryTime - Date.now()) / 60000)} minutes`);
-      } else if (stored) {
-        console.log('⚠️  Stored token has expired');
+      if (stored) {
+        this.refreshToken = stored.refreshToken;
+        if (stored.expiryTime > Date.now()) {
+          this.accessToken = stored.token;
+          this.tokenExpiry = stored.expiryTime;
+          googleDriveService.setAccessToken(stored.token);
+          console.log('✅ Loaded persistent Google Drive access token from database');
+          console.log(`   Token preview: ${stored.token.substring(0, 20)}...`);
+          console.log(`   Expires in: ${Math.floor((stored.expiryTime - Date.now()) / 60000)} minutes`);
+        } else if (this.refreshToken) {
+          console.log('⚠️  Stored token has expired, attempting refresh...');
+          await this.refreshAccessToken();
+        } else {
+          console.log('⚠️  Stored token has expired and no refresh token available');
+        }
       }
     } catch (error) {
       console.error('⚠️  Failed to load token from database:', error);
@@ -92,14 +136,18 @@ export class AuthManager {
     this.initialized = true;
   }
 
-  getAccessToken(): string | null {
+  async getAccessToken(): Promise<string | null> {
     if (!this.accessToken) {
       console.warn('⚠️  No access token stored');
       return null;
     }
     
-    if (Date.now() >= this.tokenExpiry) {
-      console.warn('⚠️  Access token expired');
+    // Check if token is expired or about to expire (within 5 minutes)
+    if (Date.now() >= this.tokenExpiry - 300000) {
+      console.warn('⚠️  Access token expired or expiring soon');
+      if (await this.refreshAccessToken()) {
+        return this.accessToken;
+      }
       this.accessToken = null;
       return null;
     }
@@ -107,8 +155,8 @@ export class AuthManager {
     return this.accessToken;
   }
 
-  isAuthenticated(): boolean {
-    const token = this.getAccessToken();
+  async isAuthenticated(): Promise<boolean> {
+    const token = await this.getAccessToken();
     if (token) {
       console.log(`✅ Authenticated with token: ${token.substring(0, 20)}...`);
     }
