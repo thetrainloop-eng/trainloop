@@ -30,7 +30,7 @@ export interface ChangeRecord {
   documentId: string;
   previousVersionId?: string;
   newVersionId: string;
-  changeType: 'created' | 'modified' | 'deleted';
+  changeType: 'created' | 'modified' | 'deleted' | 'renamed';
   detectedAt: string;
   summary?: string;
 }

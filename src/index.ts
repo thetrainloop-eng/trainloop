@@ -369,12 +369,13 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
         continue;
       }
 
-      // Compute hash
-      const hash =
-  file.md5Checksum
-    ? `md5:${file.md5Checksum}`
-    : `sha256:${googleDriveService.computeHash(content)}`;
+      // For Google Docs, always use sha256 of exported content (no md5Checksum available)
+      const hash = (file.mimeType === 'application/vnd.google-apps.document' || !file.md5Checksum)
+        ? `sha256:${googleDriveService.computeHash(content)}`
+        : `md5:${file.md5Checksum}`;
 
+      // Log file details for debugging
+      console.log(`  📊 Processing: ${file.name} | mime: ${file.mimeType} | content length: ${content.length} | hash: ${hash.substring(0, 20)}...`);
 
       // Check if document exists
       let document = await db.getDocumentByGoogleDriveId(file.id);
@@ -414,45 +415,63 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
           detectedAt: new Date().toISOString(),
           summary: `Document "${file.name}" added to the system`,
         };
-      if (file.name !== document.fileName) {
-         await db.updateDocument(document.id, { fileName: file.name });
-        // (optional) create a changeRecord with changeType: 'renamed'
-        };
-        await db.createChangeRecord(changeRecord);
-        changesDetected++;
-      } else if (hash !== document.currentHash) {
-        // Document modified
-        const versionId = googleDriveService.generateId();
-
-        const version: DocumentVersion = {
-          id: versionId,
-          documentId: document.id,
-          hash,
-          content,
-          createdAt: new Date().toISOString(),
-        };
-
-        await db.createDocumentVersion(version);
-
-        const changeRecord: ChangeRecord = {
-          id: googleDriveService.generateId(),
-          documentId: document.id,
-          previousVersionId: document.currentVersionId,
-          newVersionId: versionId,
-          changeType: 'modified',
-          detectedAt: new Date().toISOString(),
-          summary: `Document "${file.name}" content has changed`,
-        };
 
         await db.createChangeRecord(changeRecord);
-
-        await db.updateDocument(document.id, {
-          currentVersionId: versionId,
-          currentHash: hash,
-          lastModified: file.modifiedTime,
-        });
-
         changesDetected++;
+      } else {
+        // Existing document - check for rename and/or content change
+        const renamed = file.name !== document.fileName;
+        const contentChanged = hash !== document.currentHash;
+
+        if (renamed) {
+          console.log(`  🏷️  Rename detected: "${document.fileName}" -> "${file.name}"`);
+          const renameRecord: ChangeRecord = {
+            id: googleDriveService.generateId(),
+            documentId: document.id,
+            newVersionId: document.currentVersionId,
+            changeType: 'renamed',
+            detectedAt: new Date().toISOString(),
+            summary: `Document renamed from "${document.fileName}" to "${file.name}"`,
+          };
+          await db.createChangeRecord(renameRecord);
+          await db.updateDocument(document.id, { fileName: file.name, lastModified: file.modifiedTime });
+          changesDetected++;
+        }
+
+        if (contentChanged) {
+          console.log(`  ✏️  Content change detected: ${file.name}`);
+          const versionId = googleDriveService.generateId();
+
+          const version: DocumentVersion = {
+            id: versionId,
+            documentId: document.id,
+            hash,
+            content,
+            createdAt: new Date().toISOString(),
+          };
+
+          await db.createDocumentVersion(version);
+
+          const changeRecord: ChangeRecord = {
+            id: googleDriveService.generateId(),
+            documentId: document.id,
+            previousVersionId: document.currentVersionId,
+            newVersionId: versionId,
+            changeType: 'modified',
+            detectedAt: new Date().toISOString(),
+            summary: `Document "${file.name}" content has changed`,
+          };
+
+          await db.createChangeRecord(changeRecord);
+
+          await db.updateDocument(document.id, {
+            currentVersionId: versionId,
+            currentHash: hash,
+            lastModified: file.modifiedTime,
+          });
+
+          changesDetected++;
+        }
       }
     }
 
@@ -470,28 +489,14 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
   }
 }
 
-// Modified content extraction
+// Content extraction - exports actual text for Google Docs
 async function extractContent(file: any): Promise<string> {
   try {
     if (file.mimeType === 'application/vnd.google-apps.document') {
       const text = await googleDriveService.exportGoogleDocText(file.id);
+      console.log(`  📝 Exported Google Doc: ${file.name} (${text?.length ?? 0} chars)`);
       return text ?? '';
     }
-    if (file.mimeType === 'application/vnd.google-apps.document') {
-  const text = await googleDriveService.exportGoogleDocText(file.id);
-  console.log('DOC EXPORT', file.name, 'len=', text?.length ?? 0);
-  return text ?? '';
-}
-    if (file.mimeType === 'application/vnd.google-apps.document') {
-  const text = await googleDriveService.exportGoogleDocText(file.id);
-  console.log(
-    'DOC EXPORT:',
-    file.name,
-    'length:',
-    text?.length ?? 0
-  );
-  return text ?? '';
-}
 
     if (file.mimeType === 'application/pdf') return '[PDF Placeholder]';
     if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
