@@ -3,7 +3,7 @@ import { db } from './db';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URL || 'http://localhost:3000/auth/callback';
+const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URL || 'http://localhost:5000/auth/callback';
 
 export interface GoogleTokenResponse {
   access_token: string;

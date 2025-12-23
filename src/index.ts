@@ -1,3 +1,6 @@
+import "dotenv/config"
+import { google } from "googleapis";
+import { getOAuthClient, saveTokens } from "./googleAuth";
 import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
@@ -28,6 +31,27 @@ if (!fs.existsSync(dataDir)) {
     console.error('Failed to initialize:', error);
   }
 })();
+
+// List Drive Files
+app.get("/drive/files", async (req, res) => {
+  try {
+    if (!authManager.isAuthenticated()) {
+      return res.status(401).json({ error: "Not authenticated. Visit /auth/google first." });
+    }
+
+    // Use env folder if present, otherwise require query param
+    const folderId = process.env.DRIVE_FOLDER_ID || (req.query.folderId as string | undefined);
+
+    if (!folderId) {
+      return res.status(400).json({ error: "Missing folderId. Set DRIVE_FOLDER_ID or pass ?folderId=..." });
+    }
+
+    const files = await googleDriveService.listFiles(folderId);
+    res.json({ count: files.length, files });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Unknown error" });
+  }
+});
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
