@@ -303,15 +303,21 @@
       // Recent changes
       const changesList = document.getElementById('changesList');
       if (dashboardData.recentChanges && dashboardData.recentChanges.length > 0) {
-        changesList.innerHTML = dashboardData.recentChanges.map(change => `
-          <div class="change-item ${change.changeType}">
-            <div class="change-header">
-              <span class="change-file">${change.fileName || 'Unknown'}</span>
-              <span class="change-type ${change.changeType}">${change.changeType}</span>
+        changesList.innerHTML = dashboardData.recentChanges.map(change => {
+          // For baseline records, use summary instead of fileName
+          const displayTitle = change.changeType === 'baseline' 
+            ? change.summary 
+            : (change.fileName || 'Unknown');
+          return `
+            <div class="change-item ${change.changeType}">
+              <div class="change-header">
+                <span class="change-file">${displayTitle}</span>
+                <span class="change-type ${change.changeType}">${change.changeType}</span>
+              </div>
+              <div class="change-time">${formatTime(change.detectedAt)}</div>
             </div>
-            <div class="change-time">${formatTime(change.detectedAt)}</div>
-          </div>
-        `).join('');
+          `;
+        }).join('');
       } else {
         changesList.innerHTML = '<div class="empty-state">No changes detected yet</div>';
       }

@@ -409,7 +409,7 @@ export class Database {
       this.db.all(
         `SELECT cr.*, d.fileName 
          FROM change_records cr 
-         LEFT JOIN documents d ON cr.documentId = d.id 
+         LEFT JOIN documents d ON cr.documentId = d.id AND cr.changeType != 'baseline'
          ORDER BY cr.detectedAt DESC 
          LIMIT ?`,
         [limit],
