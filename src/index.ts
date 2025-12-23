@@ -251,7 +251,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
       }
 
       // Compute hash
-      const hash = googleDriveService.computeHash(content);
+      const hash = file.md5Checksum ?? googleDriveService.computeHash(content);
 
       // Check if document exists
       let document = await db.getDocumentByGoogleDriveId(file.id);
@@ -344,24 +344,29 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
   }
 }
 
-// Placeholder content extraction
+// Modified content extraction
 async function extractContent(file: any): Promise<string> {
   try {
+    // Google Docs: export real text content
+    if (file.mimeType === 'application/vnd.google-apps.document') {
+      const text = await googleDriveService.exportGoogleDocText(file.id);
+      return text ?? '';
+    }
+
+    // PDF placeholder (content parsing later)
     if (file.mimeType === 'application/pdf') {
-      // PDF extraction would require pdf-parse
-      return `[PDF Content] ${file.name}`;
-    } else if (
+      return '[PDF Content Placeholder]';
+    }
+
+    // DOCX placeholder (content parsing later)
+    if (
       file.mimeType ===
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ) {
-      // DOCX extraction would require mammoth
-      return `[DOCX Content] ${file.name}`;
-    } else if (file.mimeType === 'application/vnd.google-apps.document') {
-      // Google Docs would be converted to plain text
-      return `[Google Docs Content] ${file.name}`;
+      return '[DOCX Content Placeholder]';
     }
   } catch (error) {
-    console.error(`Error extracting content from ${file.name}:`, error);
+    console.error(`Error extracting content from ${file.id}:`, error);
   }
 
   return '';

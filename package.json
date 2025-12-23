@@ -7,6 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "tsx src/index.ts",
+    "ingest": "node src/scripts/run-ingest.js",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
