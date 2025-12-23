@@ -5,6 +5,7 @@ TrainLoop helps organizations detect policy and procedure changes and keep onboa
 
 ## Project Status
 **✅ Slice 1: Google Drive Ingestion & Change Tracking - COMPLETE**
+**✅ Scheduled Ingestion & Dashboard - COMPLETE**
 
 A minimal backend server for Google Drive ingestion and change tracking with the following architecture:
 - **Framework**: Node.js with TypeScript and Express
@@ -26,6 +27,7 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 ### API Endpoints ✅
 - `GET /health` - Health check
 - `GET /` - Landing page with auth UI
+- `GET /dashboard.html` - Dashboard UI with scheduler controls and statistics
 - `GET /auth/google` - Initiate Google OAuth login
 - `GET /auth/callback` - OAuth callback handler
 - `GET /api/ingestion-runs` - List all ingestion runs
@@ -33,6 +35,12 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 - `GET /api/documents` - List all documents
 - `GET /api/documents/:id` - Get document details with versions and change history
 - `GET /api/change-records` - List all change records
+- `GET /api/dashboard` - Dashboard data (auth status, stats, last run, recent changes)
+- `GET /api/scheduler` - Get scheduler configuration
+- `POST /api/scheduler/start` - Start scheduler (optional `intervalMinutes` and `folderId`)
+- `POST /api/scheduler/stop` - Stop scheduler
+- `POST /api/scheduler/run-now` - Trigger immediate ingestion (returns 409 if already running)
+- `GET /api/scheduler/status` - Get scheduler status including ingestionInProgress flag
 
 ### Ingestion Process ✅
 - Recursive folder traversal - finds documents in nested subdirectories
@@ -42,6 +50,22 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 - Creates immutable version records
 - Creates change records with metadata (change type, timestamp, summary)
 - Runs asynchronously in background
+- **Concurrent run protection** - ingestionInProgress flag prevents overlapping runs
+
+### Scheduled Ingestion ✅
+- Configurable interval (default 60 minutes)
+- Start/stop controls via API
+- Persists configuration across restarts
+- Automatic OAuth token refresh using refresh tokens
+- Skips scheduled runs if previous ingestion still in progress
+
+### Dashboard UI ✅
+- Google Drive connection status with authenticate button
+- Scheduler status and controls (Start/Stop/Run Now)
+- Statistics showing total documents and recent changes
+- Last ingestion details (status, time, documents processed)
+- Recent changes list with document names
+- Auto-refreshes every 30 seconds
 
 ### Google Drive Integration ✅
 - OAuth 2.0 fully authenticated and persistent
@@ -58,9 +82,11 @@ trainloop-backend/
 │   ├── types.ts                # TypeScript interfaces
 │   ├── auth.ts                 # Google OAuth authentication manager
 │   ├── services/
-│   │   └── googleDrive.ts      # Google Drive API service with recursive traversal
+│   │   ├── googleDrive.ts      # Google Drive API service with recursive traversal
+│   │   └── scheduler.ts        # Scheduled ingestion service with interval timer
 │   └── public/
 │       ├── index.html          # Landing page with auth button
+│       ├── dashboard.html      # Dashboard UI with scheduler controls
 │       ├── privacy-policy.html # Required for Google OAuth consent
 │       └── styles.css          # Basic styling
 ├── dist/                       # Compiled JavaScript (generated)
@@ -109,7 +135,17 @@ trainloop-backend/
 ### auth_tokens
 - `id`: primary key
 - `accessToken`: encrypted Google OAuth token
+- `refreshToken`: OAuth refresh token for automatic renewal
 - `expiresAt`: token expiration timestamp
+- `updatedAt`: last update timestamp
+
+### scheduler_config
+- `id`: primary key
+- `enabled`: boolean (scheduler on/off)
+- `intervalMinutes`: ingestion frequency
+- `folderId`: Google Drive folder to ingest
+- `lastRun`: timestamp of last scheduled run
+- `nextRun`: timestamp of next scheduled run
 - `updatedAt`: last update timestamp
 
 ## Setup & Running
