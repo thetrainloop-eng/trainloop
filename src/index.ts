@@ -59,12 +59,22 @@ function queueExplanation(
   newContent?: string
 ): void {
   const generator = getExplanationGenerator();
+  
+  let parsedReason = {};
+  if (changeRecord.reason) {
+    try {
+      parsedReason = JSON.parse(changeRecord.reason);
+    } catch {
+      parsedReason = {};
+    }
+  }
+  
   const input: ExplanationInput = {
     changeRecord,
     documentName,
     previousContent,
     newContent,
-    reason: changeRecord.reason ? JSON.parse(changeRecord.reason) : undefined,
+    reason: parsedReason,
   };
   
   generateAndStoreExplanation(changeRecord.id, generator, input).catch((err) => {

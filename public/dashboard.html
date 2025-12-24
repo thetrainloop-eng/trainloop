@@ -401,9 +401,15 @@
       let bullets = null;
       if (change.explanationBullets) {
         try {
-          bullets = typeof change.explanationBullets === 'string' 
+          const parsed = typeof change.explanationBullets === 'string' 
             ? JSON.parse(change.explanationBullets) 
             : change.explanationBullets;
+          
+          if (Array.isArray(parsed)) {
+            bullets = { what_changed: parsed, why_it_matters: [], recommended_actions: [] };
+          } else if (typeof parsed === 'object' && parsed !== null) {
+            bullets = parsed;
+          }
         } catch (e) {
           bullets = null;
         }
@@ -416,19 +422,19 @@
       }
 
       if (bullets) {
-        if (bullets.what_changed && bullets.what_changed.length > 0) {
+        if (bullets.what_changed && Array.isArray(bullets.what_changed) && bullets.what_changed.length > 0) {
           html += `<div class="explanation-section">
             <div class="explanation-section-title">What Changed</div>
             <ul class="explanation-bullets">${bullets.what_changed.map(b => `<li>${b}</li>`).join('')}</ul>
           </div>`;
         }
-        if (bullets.why_it_matters && bullets.why_it_matters.length > 0) {
+        if (bullets.why_it_matters && Array.isArray(bullets.why_it_matters) && bullets.why_it_matters.length > 0) {
           html += `<div class="explanation-section">
             <div class="explanation-section-title">Why It Matters</div>
             <ul class="explanation-bullets">${bullets.why_it_matters.map(b => `<li>${b}</li>`).join('')}</ul>
           </div>`;
         }
-        if (bullets.recommended_actions && bullets.recommended_actions.length > 0) {
+        if (bullets.recommended_actions && Array.isArray(bullets.recommended_actions) && bullets.recommended_actions.length > 0) {
           html += `<div class="explanation-section">
             <div class="explanation-section-title">Recommended Actions</div>
             <ul class="explanation-bullets">${bullets.recommended_actions.map(b => `<li>${b}</li>`).join('')}</ul>
