@@ -71,12 +71,15 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 
 ### Plain-English Explanations (Slice 2) ✅
 - Automatic explanation generation for every change record
-- Deterministic explanations for RENAMED and BASELINE (no AI required)
-- AI-powered explanations for CREATED, MODIFIED, DELETED (when enabled)
+- Deterministic explanations for RENAMED, BASELINE, and DELETED (no AI required)
+- AI-powered explanations for CREATED, MODIFIED (when enabled)
 - Feature flag: `EXPLANATIONS_ENABLED=true|false` (default: false)
-- Structured output with what_changed, why_it_matters, recommended_actions
+- **Evidence-based MODIFIED explanations** with before/after text excerpts
+- **High-risk phrase detection** for privacy/compliance language (sell, share, disclose, third party, etc.)
+- Structured output with change_items containing specific changes and evidence
 - Non-blocking generation (doesn't slow down ingestion)
-- Graceful failure handling (ingestion continues if explanation fails)
+- Graceful failure handling with fallback to deterministic explanations
+- Backfill mechanism for existing records with null explanationStatus
 
 ### Google Drive Integration ✅
 - OAuth 2.0 fully authenticated and persistent
