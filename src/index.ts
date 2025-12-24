@@ -5,7 +5,8 @@ import { db } from './db';
 import { googleDriveService } from './services/googleDrive';
 import { schedulerService } from './services/scheduler';
 import { authManager } from './auth';
-import { ChangeRecord, ChangeReason, DocumentVersion, IngestionRun } from './types';
+import { getExplanationGenerator, generateAndStoreExplanation } from './services/explanationGenerator';
+import { ChangeRecord, ChangeReason, DocumentVersion, IngestionRun, ExplanationInput } from './types';
 import fs from 'fs';
 import path from 'path';
 
@@ -48,6 +49,27 @@ async function runIngestionForScheduler(runId: string, folderId: string): Promis
   };
   await db.createIngestionRun(run);
   await startIngestion(runId, folderId);
+}
+
+// Queue explanation generation (non-blocking)
+function queueExplanation(
+  changeRecord: ChangeRecord,
+  documentName?: string,
+  previousContent?: string,
+  newContent?: string
+): void {
+  const generator = getExplanationGenerator();
+  const input: ExplanationInput = {
+    changeRecord,
+    documentName,
+    previousContent,
+    newContent,
+    reason: changeRecord.reason ? JSON.parse(changeRecord.reason) : undefined,
+  };
+  
+  generateAndStoreExplanation(changeRecord.id, generator, input).catch((err) => {
+    console.error(`Failed to generate explanation for ${changeRecord.id}:`, err);
+  });
 }
 
 // List Drive Files
@@ -428,6 +450,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
           };
 
           await db.createChangeRecord(changeRecord);
+          queueExplanation(changeRecord, file.name, undefined, content);
           changesDetected++;
         }
       } else {
@@ -449,6 +472,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
               severity: 'medium',
             };
             await db.createChangeRecord(changeRecord);
+            queueExplanation(changeRecord, file.name, undefined, content);
             changesDetected++;
           }
         }
@@ -475,6 +499,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
             severity: 'low',
           };
           await db.createChangeRecord(renameRecord);
+          queueExplanation(renameRecord, file.name);
           await db.updateDocument(document.id, { fileName: file.name, lastModified: file.modifiedTime });
           changesDetected++;
         }
@@ -509,6 +534,10 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
           };
 
           await db.createChangeRecord(changeRecord);
+          
+          // For modified, fetch previous content for diff
+          const prevVersion = document.currentVersionId ? await db.getDocumentVersion(document.currentVersionId) : null;
+          queueExplanation(changeRecord, file.name, prevVersion?.content, content);
 
           await db.updateDocument(document.id, {
             currentVersionId: versionId,
@@ -544,6 +573,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
           severity: 'medium',
         };
         await db.createChangeRecord(deleteRecord);
+        queueExplanation(deleteRecord, doc.fileName);
         await db.updateDocument(doc.id, { isDeleted: true, deletedAt: now } as any);
         
         changesDetected++;
@@ -569,6 +599,7 @@ async function startIngestion(runId: string, googleDriveFolderId: string): Promi
         severity: 'low',
       };
       await db.createChangeRecord(baselineRecord);
+      queueExplanation(baselineRecord);
       changesDetected = 1;
       console.log(`📋 Baseline record created: ${docsProcessed} documents indexed`);
     }
