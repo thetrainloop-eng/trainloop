@@ -116,8 +116,44 @@
     .change-type.created { background: #e8f5e9; color: #2e7d32; }
     .change-type.modified { background: #fff3e0; color: #e65100; }
     .change-type.deleted { background: #ffebee; color: #c62828; }
+    .change-type.baseline { background: #e3f2fd; color: #1565c0; }
+    .change-type.renamed { background: #f3e5f5; color: #7b1fa2; }
     .change-time { font-size: 12px; color: #999; }
     .empty-state { text-align: center; padding: 40px; color: #999; }
+    .explanation-status {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 8px;
+      margin-left: 8px;
+      font-weight: 500;
+    }
+    .explanation-status.generated { background: #e8f5e9; color: #2e7d32; }
+    .explanation-status.skipped { background: #fff3e0; color: #e65100; }
+    .explanation-status.failed { background: #ffebee; color: #c62828; }
+    .explanation-status.pending { background: #e3f2fd; color: #1565c0; }
+    .view-explanation {
+      font-size: 12px;
+      color: #667eea;
+      cursor: pointer;
+      margin-top: 6px;
+      display: inline-block;
+    }
+    .view-explanation:hover { text-decoration: underline; }
+    .explanation-content {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      background: #fff;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+      font-size: 13px;
+    }
+    .explanation-content.show { display: block; }
+    .explanation-text { font-weight: 500; margin-bottom: 8px; color: #333; }
+    .explanation-section { margin-bottom: 8px; }
+    .explanation-section-title { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+    .explanation-bullets { padding-left: 16px; margin: 0; }
+    .explanation-bullets li { margin-bottom: 3px; color: #444; }
     .config-form { margin-top: 15px; }
     .form-group { margin-bottom: 15px; }
     .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 5px; }
@@ -303,18 +339,34 @@
       // Recent changes
       const changesList = document.getElementById('changesList');
       if (dashboardData.recentChanges && dashboardData.recentChanges.length > 0) {
-        changesList.innerHTML = dashboardData.recentChanges.map(change => {
-          // For baseline records, use summary instead of fileName
+        changesList.innerHTML = dashboardData.recentChanges.map((change, index) => {
           const displayTitle = change.changeType === 'baseline' 
             ? change.summary 
             : (change.fileName || 'Unknown');
+          
+          const statusBadge = change.explanationStatus 
+            ? `<span class="explanation-status ${change.explanationStatus}">${change.explanationStatus}</span>` 
+            : '';
+          
+          const hasExplanation = change.explanationText || change.explanationBullets;
+          const viewLink = hasExplanation 
+            ? `<span class="view-explanation" onclick="toggleExplanation(${index})">View explanation</span>` 
+            : (change.explanationStatus === 'pending' ? '<span style="font-size:11px;color:#999;">Generating...</span>' : '');
+          
+          const explanationHtml = renderExplanation(change, index);
+          
           return `
             <div class="change-item ${change.changeType}">
               <div class="change-header">
                 <span class="change-file">${displayTitle}</span>
-                <span class="change-type ${change.changeType}">${change.changeType}</span>
+                <div>
+                  <span class="change-type ${change.changeType}">${change.changeType}</span>
+                  ${statusBadge}
+                </div>
               </div>
               <div class="change-time">${formatTime(change.detectedAt)}</div>
+              ${viewLink}
+              ${explanationHtml}
             </div>
           `;
         }).join('');
@@ -329,6 +381,63 @@
       if (!isoString) return '-';
       const date = new Date(isoString);
       return date.toLocaleString();
+    }
+
+    function toggleExplanation(index) {
+      const el = document.getElementById(`explanation-${index}`);
+      if (el) {
+        el.classList.toggle('show');
+      }
+    }
+
+    function renderExplanation(change, index) {
+      if (!change.explanationText && !change.explanationBullets) {
+        if (change.explanationStatus === 'failed' && change.explanationError) {
+          return `<div class="explanation-content" id="explanation-${index}" style="display:block;background:#fff3e0;border-color:#ff9800;"><span style="color:#e65100;">Error: ${change.explanationError}</span></div>`;
+        }
+        return '';
+      }
+
+      let bullets = null;
+      if (change.explanationBullets) {
+        try {
+          bullets = typeof change.explanationBullets === 'string' 
+            ? JSON.parse(change.explanationBullets) 
+            : change.explanationBullets;
+        } catch (e) {
+          bullets = null;
+        }
+      }
+
+      let html = `<div class="explanation-content" id="explanation-${index}">`;
+      
+      if (change.explanationText) {
+        html += `<div class="explanation-text">${change.explanationText}</div>`;
+      }
+
+      if (bullets) {
+        if (bullets.what_changed && bullets.what_changed.length > 0) {
+          html += `<div class="explanation-section">
+            <div class="explanation-section-title">What Changed</div>
+            <ul class="explanation-bullets">${bullets.what_changed.map(b => `<li>${b}</li>`).join('')}</ul>
+          </div>`;
+        }
+        if (bullets.why_it_matters && bullets.why_it_matters.length > 0) {
+          html += `<div class="explanation-section">
+            <div class="explanation-section-title">Why It Matters</div>
+            <ul class="explanation-bullets">${bullets.why_it_matters.map(b => `<li>${b}</li>`).join('')}</ul>
+          </div>`;
+        }
+        if (bullets.recommended_actions && bullets.recommended_actions.length > 0) {
+          html += `<div class="explanation-section">
+            <div class="explanation-section-title">Recommended Actions</div>
+            <ul class="explanation-bullets">${bullets.recommended_actions.map(b => `<li>${b}</li>`).join('')}</ul>
+          </div>`;
+        }
+      }
+
+      html += '</div>';
+      return html;
     }
 
     async function startScheduler() {
