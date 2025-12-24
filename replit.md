@@ -6,6 +6,7 @@ TrainLoop helps organizations detect policy and procedure changes and keep onboa
 ## Project Status
 **✅ Slice 1: Google Drive Ingestion & Change Tracking - COMPLETE**
 **✅ Scheduled Ingestion & Dashboard - COMPLETE**
+**✅ Slice 2: Plain-English Explanations - COMPLETE**
 
 A minimal backend server for Google Drive ingestion and change tracking with the following architecture:
 - **Framework**: Node.js with TypeScript and Express
@@ -64,8 +65,18 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 - Scheduler status and controls (Start/Stop/Run Now)
 - Statistics showing total documents and recent changes
 - Last ingestion details (status, time, documents processed)
-- Recent changes list with document names
+- Recent changes list with document names and explanation status badges
+- Expandable explanations with what changed, why it matters, and recommended actions
 - Auto-refreshes every 30 seconds
+
+### Plain-English Explanations (Slice 2) ✅
+- Automatic explanation generation for every change record
+- Deterministic explanations for RENAMED and BASELINE (no AI required)
+- AI-powered explanations for CREATED, MODIFIED, DELETED (when enabled)
+- Feature flag: `EXPLANATIONS_ENABLED=true|false` (default: false)
+- Structured output with what_changed, why_it_matters, recommended_actions
+- Non-blocking generation (doesn't slow down ingestion)
+- Graceful failure handling (ingestion continues if explanation fails)
 
 ### Google Drive Integration ✅
 - OAuth 2.0 fully authenticated and persistent
@@ -82,7 +93,8 @@ trainloop-backend/
 │   ├── types.ts                # TypeScript interfaces
 │   ├── auth.ts                 # Google OAuth authentication manager
 │   ├── services/
-│   │   ├── googleDrive.ts      # Google Drive API service with recursive traversal
+│   │   ├── googleDrive.ts          # Google Drive API service with recursive traversal
+│   │   ├── explanationGenerator.ts # Explanation service with swappable AI provider
 │   │   └── scheduler.ts        # Scheduled ingestion service with interval timer
 │   └── public/
 │       ├── index.html          # Landing page with auth button
