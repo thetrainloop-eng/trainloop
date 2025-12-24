@@ -1,0 +1,86 @@
+We are starting Slice 2: Plain-English explanations for detected policy/document changes.
+
+Current system (do not break):
+- Google Drive OAuth connection works.
+- Ingestion runs on demand + scheduled.
+- Change detection works: created / modified / renamed / deleted / baseline.
+- We store versions + hashes; for Google Docs we store exported text; PDFs/DOCX can be placeholders.
+- Dashboard consumes /api/dashboard and shows recent changes.
+
+Goal:
+For each change record, generate a plain-English explanation that is useful to an onboarding leader / ops / compliance person:
+- What changed (in simple terms)
+- Why it matters (impact framing)
+- What to do next (optional recommended action)
+This must work even when we only have text content (Google Docs). For PDFs/DOCX placeholders, degrade gracefully.
+
+Constraints:
+- Minimal diffs. No major refactor. Keep existing routes working.
+- Explanations should be generated deterministically and stored, not regenerated on every dashboard refresh.
+- Avoid heavy compute. Only generate explanations when a change is first detected.
+- Never store or log secrets. Do not leak OAuth tokens.
+- Add a feature flag env var for AI usage: EXPLANATIONS_ENABLED=true/false (default false if missing).
+- Use existing OpenAI (or model) integration if present; if not, implement a thin provider with clean interface so we can swap later.
+
+Data model changes:
+- Extend change_records with fields:
+  - explanationText (TEXT)  // plain-English summary
+  - explanationBullets (TEXT JSON) // array of bullets; store as JSON string
+  - explanationMeta (TEXT JSON) // optional: confidence, inputs used, model, promptVersion
+  - explanationStatus (TEXT) // 'pending'|'generated'|'failed'|'skipped'
+  - explanationError (TEXT nullable)
+  - explainedAt (TEXT nullable)
+(If migrations are painful in SQLite, provide dev-safe approach: recreate DB OR table recreation migration.)
+
+Generation logic:
+- Trigger explanation generation right after creating a change record (except baseline maybe gets a simple deterministic message).
+- For MODIFIED changes with Google Doc text available:
+  - Fetch previous version content and new version content.
+  - Compute a lightweight diff (no giant libraries): 
+    - If text is long, chunk and summarize changes.
+    - If we can’t diff reliably, at least compare and extract top changed sections.
+  - Then produce explanation.
+- For RENAMED: explanation is deterministic (no AI): "Renamed from X to Y" + why it might matter.
+- For CREATED: explanation should mention new doc added; if content exists, summarize the doc in 3 bullets.
+- For DELETED: explanation should mention it was removed from folder; recommend verifying whether it is intentionally deprecated.
+- For PDFs/DOCX placeholders: explanation should be deterministic and say content diff unavailable; still provide next steps.
+
+Prompting requirements (if AI enabled):
+- Output must be structured JSON with:
+  {
+    "title": string,
+    "what_changed": [bullets],
+    "why_it_matters": [bullets],
+    "recommended_actions": [bullets],
+    "confidence": "low"|"medium"|"high"
+  }
+- Keep it concise: 3-6 bullets per section.
+- Use plain language, avoid jargon.
+- Do not invent facts not present in the text; if uncertain, say "May" or "Needs review".
+- When content is missing (PDF/DOCX placeholder), be explicit that analysis is limited.
+
+API / UI updates (minimal):
+- /api/dashboard currently returns recentChanges list. Extend each change item with:
+  - explanation (object) OR explanationText + explanationBullets + status
+- Update dashboard.html to show:
+  - a "View explanation" expand/collapse per change
+  - status badges (generated/pending/failed/skipped)
+  - If pending and EXPLANATIONS_ENABLED=true, show "Generating..." and auto-refresh already exists.
+
+Operational considerations:
+- Add rate limiting / backoff: if AI call fails, set status=failed and store error; do not crash ingestion.
+- Ensure concurrency protection: explanation generation should not create overlapping runs (but can run inline after change detection as long as it’s safe).
+- If EXPLANATIONS_ENABLED=false, set status=skipped and store deterministic explanation for renamed/deleted/baseline.
+
+Acceptance tests:
+1) Rename a doc -> change record shows explanation with old/new name, status generated or skipped.
+2) Modify a Google Doc (edit a paragraph) -> explanation references the change at a high level (not a full diff) and includes why it matters.
+3) Create a new Google Doc -> explanation summarizes doc.
+4) Delete a doc -> explanation warns about deprecation and suggests action.
+5) AI failure simulation (bad API key) -> ingestion still succeeds, explanationStatus=failed, dashboard shows error state.
+
+Deliverables:
+- List exact files changed.
+- Show example JSON explanation output for each change type.
+- Provide instructions for new env vars in Replit Secrets.
+- Keep changes small and reviewable.
