@@ -1,0 +1,59 @@
+Upgrade Slice 2 explanations from generic summaries to SPECIFIC, evidence-based change explanations for MODIFIED documents.
+
+Current issue:
+Explanations say “content changed” but do not identify what specifically changed. We need TrainLoop to state concrete changes for the hypothetical company based on the actual text differences.
+
+Requirements:
+1) For MODIFIED changes where we have previousContent and newContent (Google Docs), compute a real text diff and generate a structured explanation from that diff.
+2) Output must be evidence-based: every described change must include short BEFORE and AFTER excerpts from the text (<= 30 words each). No invented facts.
+3) Provide 3–8 concrete change items max, prioritizing the most important changes (requirements, responsibilities, timelines, thresholds, steps, prohibitions).
+4) Produce a final plain-English “What changed / Why it matters / Recommended actions” but the “What changed” section MUST be populated from those concrete diff items.
+5) If we cannot confidently locate changes (e.g., content too large or diff fails), degrade gracefully: say “Could not isolate exact edits; here are the top sections that changed” with evidence excerpts.
+6) Keep existing provider abstraction (ExplanationGenerator interface). Only improve internals/prompting + add diff helper.
+
+Implementation approach (minimal, practical):
+- Add a diff helper for text:
+  - Split content into paragraphs or lines (e.g., by blank lines or '\n').
+  - Use a lightweight diff algorithm/library if already installed; if not, implement a simple LCS or use 'diff' npm package.
+  - Produce a list of changed chunks (added/removed/modified) with surrounding context.
+  - Limit to top N chunks by size/importance.
+- Pass these diff chunks to the AI instead of the entire documents when possible:
+  - Provide documentName, changeType, severity
+  - Provide a “diffChunks” array like:
+    [{type, before, after, contextHeadingGuess}]
+- Prompt MUST require JSON output with concrete items and evidence.
+
+New required JSON output schema for MODIFIED:
+{
+  "title": string,
+  "change_items": [
+    {
+      "change_type": "added"|"removed"|"modified",
+      "location": string|null,
+      "before_excerpt": string|null,
+      "after_excerpt": string|null,
+      "plain_english_change": string,
+      "why_it_matters": string,
+      "recommended_action": string,
+      "confidence": "low"|"medium"|"high"
+    }
+  ],
+  "summary": {
+    "what_changed": string[],
+    "why_it_matters": string[],
+    "recommended_actions": string[]
+  },
+  "overall_confidence": "low"|"medium"|"high"
+}
+
+Dashboard:
+- Keep rendering as-is, but update it to show “change_items” under WHAT CHANGED (bullets), and optionally show before/after excerpts in a collapsible details area.
+
+Acceptance test:
+- Edit one realistic policy paragraph (e.g., change a timeline, add a required approval step, alter escalation procedure).
+- After ingestion, the explanation must mention the specific change with before/after excerpts and a location/section if possible.
+
+Deliverables:
+- List files changed.
+- Show example explanation JSON produced for a real modified doc from the test folder.
+- Keep changes small, avoid refactors.
