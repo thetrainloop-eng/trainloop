@@ -192,6 +192,25 @@
     .evidence-before { border-left: 3px solid #f44336; }
     .evidence-after { border-left: 3px solid #4caf50; }
     .high-risk-alert { background: #ffebee; color: #c62828; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 12px; font-weight: 500; }
+    .sop-requirements { margin-top: 12px; }
+    .sop-requirement-card { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+    .sop-requirement-card.training { border-left: 4px solid #1976d2; }
+    .sop-requirement-card.system { border-left: 4px solid #7b1fa2; }
+    .sop-requirement-card.storage { border-left: 4px solid #388e3c; }
+    .sop-requirement-card.step { border-left: 4px solid #f57c00; }
+    .sop-requirement-card.responsibility { border-left: 4px solid #c62828; }
+    .sop-requirement-card.obligation { border-left: 4px solid #455a64; }
+    .sop-category { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; font-weight: 600; }
+    .sop-category.training { background: #bbdefb; color: #1565c0; }
+    .sop-category.system { background: #e1bee7; color: #7b1fa2; }
+    .sop-category.storage { background: #c8e6c9; color: #2e7d32; }
+    .sop-category.step { background: #ffe0b2; color: #e65100; }
+    .sop-category.responsibility { background: #ffcdd2; color: #b71c1c; }
+    .sop-category.obligation { background: #cfd8dc; color: #37474f; }
+    .sop-applies-to { font-size: 11px; color: #1565c0; margin-left: 8px; }
+    .sop-requirement-text { font-size: 13px; color: #333; margin: 8px 0; font-weight: 500; }
+    .sop-impact { font-size: 12px; color: #666; margin-bottom: 6px; }
+    .sop-what-is-new { font-size: 12px; color: #1976d2; font-weight: 500; margin-bottom: 4px; }
     .config-form { margin-top: 15px; }
     .form-group { margin-bottom: 15px; }
     .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 5px; }
@@ -475,7 +494,41 @@
         html += `<div class="explanation-text">${change.explanationText}</div>`;
       }
 
-      if (bullets && bullets.change_items && Array.isArray(bullets.change_items) && bullets.change_items.length > 0) {
+      if (bullets && bullets.new_or_changed_requirements && Array.isArray(bullets.new_or_changed_requirements) && bullets.new_or_changed_requirements.length > 0) {
+        html += `<div class="sop-requirements">
+          <div class="explanation-section-title">New or Changed Requirements (${bullets.new_or_changed_requirements.length})</div>`;
+        
+        bullets.new_or_changed_requirements.forEach((req, i) => {
+          html += `<div class="sop-requirement-card ${req.category || 'obligation'}">
+            <div style="margin-bottom:6px;">
+              <span class="sop-category ${req.category || 'obligation'}">${req.category || 'requirement'}</span>
+              ${req.applies_to ? `<span class="sop-applies-to">Applies to: ${req.applies_to}</span>` : ''}
+            </div>
+            <div class="sop-what-is-new">${req.what_is_new}</div>
+            <div class="sop-requirement-text">"${req.requirement}"</div>
+            <div class="sop-impact">Impact: ${req.operational_impact}</div>`;
+          
+          if (req.before_excerpt || req.after_excerpt) {
+            html += `<span class="evidence-toggle" onclick="toggleSopEvidence(${index}, ${i})">Show evidence</span>
+              <div class="evidence-content" id="sop-evidence-${index}-${i}">`;
+            if (req.before_excerpt) {
+              html += `<div class="evidence-box evidence-before">
+                <div class="evidence-label">Before</div>
+                <div class="evidence-text">${req.before_excerpt}</div>
+              </div>`;
+            }
+            if (req.after_excerpt) {
+              html += `<div class="evidence-box evidence-after">
+                <div class="evidence-label">After</div>
+                <div class="evidence-text">${req.after_excerpt}</div>
+              </div>`;
+            }
+            html += `</div>`;
+          }
+          html += `</div>`;
+        });
+        html += `</div>`;
+      } else if (bullets && bullets.change_items && Array.isArray(bullets.change_items) && bullets.change_items.length > 0) {
         html += `<div class="change-items">
           <div class="explanation-section-title">Specific Changes (${bullets.change_items.length})</div>`;
         
@@ -539,6 +592,13 @@
     
     function toggleEvidence(changeIndex, itemIndex) {
       const el = document.getElementById(`evidence-${changeIndex}-${itemIndex}`);
+      if (el) {
+        el.classList.toggle('show');
+      }
+    }
+    
+    function toggleSopEvidence(changeIndex, reqIndex) {
+      const el = document.getElementById(`sop-evidence-${changeIndex}-${reqIndex}`);
       if (el) {
         el.classList.toggle('show');
       }

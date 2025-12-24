@@ -81,6 +81,18 @@ A minimal backend server for Google Drive ingestion and change tracking with the
 - Graceful failure handling with fallback to deterministic explanations
 - Backfill mechanism for existing records with null explanationStatus
 
+### SOP/Procedure Document Analysis ✅
+- **Automatic SOP detection**: Documents with "SOP", "Procedure" in filename/content, or numbered steps
+- **Requirement extraction** from changed paragraphs:
+  - Obligation verbs: must, shall, required, need to, mandatory, etc.
+  - System/tool keywords: electronic, software, platform, Google Drive, etc.
+  - Training keywords: training, certification, onboarding, etc.
+  - Storage keywords: store, archive, retain, folder, etc.
+- **Categorized requirements**: training, system, storage, step, responsibility, obligation
+- **Applies-to detection**: Identifies affected roles (client-facing representatives, staff, etc.)
+- **Operational impact analysis**: Explains business implications of each requirement
+- **Dashboard rendering**: Color-coded requirement cards by category with evidence toggles
+
 ### Google Drive Integration ✅
 - OAuth 2.0 fully authenticated and persistent
 - Token storage in SQLite survives server restarts

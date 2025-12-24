@@ -52,11 +52,23 @@ export interface ChangeItem {
   confidence: 'low' | 'medium' | 'high';
 }
 
+export interface SOPRequirement {
+  requirement: string;
+  applies_to: string | null;
+  what_is_new: string;
+  before_excerpt: string | null;
+  after_excerpt: string;
+  operational_impact: string;
+  category: 'step' | 'obligation' | 'system' | 'training' | 'storage' | 'responsibility';
+  confidence: 'low' | 'medium' | 'high';
+}
+
 export interface ExplanationBullets {
   what_changed: string[];
   why_it_matters: string[];
   recommended_actions: string[];
   change_items?: ChangeItem[];
+  new_or_changed_requirements?: SOPRequirement[];
 }
 
 export interface ExplanationMeta {
@@ -68,6 +80,7 @@ export interface ExplanationMeta {
   highRiskDetected?: boolean;
   highRiskPhrases?: string[];
   skippedAI?: boolean;
+  documentType?: 'policy' | 'procedural' | 'general';
 }
 
 export interface ChangeRecord {

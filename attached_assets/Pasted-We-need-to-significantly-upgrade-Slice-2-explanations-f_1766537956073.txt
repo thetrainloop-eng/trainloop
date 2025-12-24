@@ -1,0 +1,73 @@
+We need to significantly upgrade Slice 2 explanations for SOP / procedure documents.
+
+Current problem:
+For modified SOPs, explanations still say “content changed” and fail to identify concrete operational changes (new requirements, tools, training, or storage rules), even when such changes are clearly present in the text.
+
+Goal:
+When an SOP is modified, TrainLoop must explain EXACTLY what operational behavior has changed for the company.
+
+Key requirement:
+Explanations must identify NEW or CHANGED PROCEDURAL REQUIREMENTS — not just summarize text changes.
+
+Detection rules (mandatory):
+When diffing SOP content, explicitly look for:
+- New or modified steps (e.g., “Step 1”, “Step 2”)
+- New REQUIRED actions (keywords: must, required, shall, need to)
+- New tools or systems (e.g., electronic systems, software, platforms)
+- New training requirements
+- New storage or documentation rules
+- New responsibilities assigned to a role or group
+
+If any of the above are detected, the explanation MUST call them out explicitly.
+
+Implementation approach:
+1) During MODIFIED explanation generation, classify documentType:
+   - If filename or content includes “SOP”, “Procedure”, or numbered steps → treat as PROCEDURAL.
+2) Use diff chunks (before/after) to extract only changed paragraphs.
+3) From changed paragraphs, extract “requirement statements”:
+   - Sentences containing obligation verbs or system references.
+4) Feed ONLY these extracted requirement statements (before + after) into the AI prompt.
+
+AI output requirements (STRICT):
+For SOP changes, output must include a section called “New or Changed Requirements” populated with concrete items.
+
+Required JSON output schema for SOP MODIFIED:
+{
+  "title": string,
+  "new_or_changed_requirements": [
+    {
+      "requirement": string,
+      "applies_to": string,
+      "what_is_new": string,
+      "before_excerpt": string|null,
+      "after_excerpt": string,
+      "operational_impact": string,
+      "confidence": "low"|"medium"|"high"
+    }
+  ],
+  "why_it_matters": string[],
+  "recommended_actions": string[],
+  "overall_confidence": "low"|"medium"|"high"
+}
+
+Behavior rules:
+- Do NOT say “detailed diff not available” if text content exists.
+- Do NOT generalize (“may affect policies”) when a concrete requirement is present.
+- Use company-facing language (“client-facing representatives”, “onboarding staff”).
+- Do NOT invent requirements not present in text.
+
+Acceptance test (must pass):
+Given this change:
+- Adding “newly implemented electronic systems”
+- Adding “new training is required for all client-facing representatives”
+- Adding “store onboarding documents in the company’s internal Google Drive folder”
+
+The explanation MUST explicitly list:
+- A new training requirement
+- A new system/tool usage requirement
+- A new document storage requirement
+
+Deliverables:
+- List files changed
+- Show example explanation JSON for the modified SOP using real text from the test folder
+- Ensure explanationStatus is ‘generated’ and not generic

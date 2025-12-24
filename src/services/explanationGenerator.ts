@@ -5,10 +5,17 @@ import {
   ExplanationOutput, 
   ExplanationBullets, 
   ExplanationMeta,
-  ChangeItem
+  ChangeItem,
+  SOPRequirement
 } from '../types';
 import { db } from '../db';
-import { computeTextDiff, DiffResult } from './diffHelper';
+import { 
+  computeTextDiff, 
+  computeTextDiffWithContext,
+  DiffResult,
+  RequirementStatement,
+  detectProceduralDocument
+} from './diffHelper';
 
 export interface IExplanationGenerator {
   generateExplanation(input: ExplanationInput): Promise<ExplanationOutput>;
@@ -181,7 +188,12 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
     const hasNew = newContent && !newContent.startsWith('[') && newContent.length > 50;
 
     if (hasPrevious && hasNew) {
-      const diffResult = computeTextDiff(previousContent!, newContent!);
+      const diffResult = computeTextDiffWithContext(previousContent!, newContent!, name);
+      
+      if (diffResult.isProcedural && diffResult.requirements.length > 0) {
+        return this.generateSOPExplanation(name, diffResult);
+      }
+      
       return this.generateEvidenceBasedExplanation(name, diffResult);
     }
 
@@ -200,6 +212,121 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
       },
       { confidence: 'low' }
     );
+  }
+
+  protected generateSOPExplanation(
+    documentName: string,
+    diffResult: DiffResult
+  ): ExplanationOutput {
+    const { requirements, highRiskPhrases, hasHighRiskChanges } = diffResult;
+    
+    const sopRequirements: SOPRequirement[] = requirements.map(req => {
+      let operationalImpact = '';
+      
+      switch (req.category) {
+        case 'training':
+          operationalImpact = 'Staff training programs may need to be updated or new training sessions scheduled';
+          break;
+        case 'system':
+          operationalImpact = 'Employees must learn and use the specified system or tool';
+          break;
+        case 'storage':
+          operationalImpact = 'Document handling and filing procedures must change';
+          break;
+        case 'step':
+          operationalImpact = 'Workflow steps have changed - current procedures need updating';
+          break;
+        case 'responsibility':
+          operationalImpact = 'Role responsibilities have been assigned or modified';
+          break;
+        default:
+          operationalImpact = 'A new requirement or obligation has been introduced';
+      }
+      
+      return {
+        requirement: req.text,
+        applies_to: req.appliesTo,
+        what_is_new: this.describeNewRequirement(req),
+        before_excerpt: req.beforeText,
+        after_excerpt: req.afterText || req.text,
+        operational_impact: operationalImpact,
+        category: req.category,
+        confidence: req.location ? 'high' : 'medium',
+      };
+    });
+    
+    const whatChanged = sopRequirements.map(req => req.what_is_new);
+    
+    const whyMatters: string[] = [];
+    const trainingReqs = sopRequirements.filter(r => r.category === 'training');
+    const systemReqs = sopRequirements.filter(r => r.category === 'system');
+    const storageReqs = sopRequirements.filter(r => r.category === 'storage');
+    
+    if (trainingReqs.length > 0) {
+      whyMatters.push(`${trainingReqs.length} new training requirement(s) identified`);
+    }
+    if (systemReqs.length > 0) {
+      whyMatters.push(`${systemReqs.length} new system/tool usage requirement(s)`);
+    }
+    if (storageReqs.length > 0) {
+      whyMatters.push(`${storageReqs.length} new document storage requirement(s)`);
+    }
+    if (hasHighRiskChanges) {
+      whyMatters.push(`HIGH RISK: Contains compliance language (${highRiskPhrases.slice(0, 3).join(', ')})`);
+    }
+    if (whyMatters.length === 0) {
+      whyMatters.push('Procedural requirements have been updated');
+    }
+    
+    const recommendedActions: string[] = [];
+    if (trainingReqs.length > 0) {
+      recommendedActions.push('Schedule required training for affected staff');
+    }
+    if (systemReqs.length > 0) {
+      recommendedActions.push('Ensure employees have access to required systems');
+    }
+    if (storageReqs.length > 0) {
+      recommendedActions.push('Update document storage procedures');
+    }
+    recommendedActions.push('Review the full SOP for complete context');
+    recommendedActions.push('Update onboarding materials to reflect new procedures');
+    
+    const title = `"${documentName}" SOP modified: ${sopRequirements.length} new/changed requirement(s)`;
+    
+    return createDeterministicExplanation(
+      title,
+      {
+        what_changed: whatChanged,
+        why_it_matters: whyMatters,
+        recommended_actions: recommendedActions,
+        new_or_changed_requirements: sopRequirements,
+      },
+      {
+        confidence: 'high',
+        highRiskDetected: hasHighRiskChanges,
+        highRiskPhrases: highRiskPhrases,
+        documentType: 'procedural',
+      }
+    );
+  }
+
+  protected describeNewRequirement(req: RequirementStatement): string {
+    const categoryDescriptions: Record<string, string> = {
+      training: 'New training requirement',
+      system: 'New system/tool usage requirement',
+      storage: 'New document storage requirement',
+      step: 'New or modified procedure step',
+      responsibility: 'New role responsibility assigned',
+      obligation: 'New requirement or obligation',
+    };
+    
+    const base = categoryDescriptions[req.category] || 'New requirement';
+    
+    if (req.appliesTo) {
+      return `${base} for ${req.appliesTo}`;
+    }
+    
+    return base;
   }
 
   protected generateEvidenceBasedExplanation(
