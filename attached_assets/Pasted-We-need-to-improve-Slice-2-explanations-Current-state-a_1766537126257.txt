@@ -1,0 +1,61 @@
+We need to improve Slice 2 explanations. Current state: /api/change-records shows deleted and baseline records with explanationText=null and explanationStatus=null (example: changeType='deleted' and changeType='baseline'). Also, MODIFIED explanations are too generic and fail to call out specific policy language changes (e.g., added sentence: “may sell your information… for undisclosed purposes”).
+
+Goals:
+A) Ensure EVERY change record has a non-null explanationStatus and explanationText (or explanationBullets), including baseline and deleted.
+B) Upgrade MODIFIED explanations to be specific, evidence-based (before/after excerpts) and to prioritize high-risk privacy/compliance language.
+
+Constraints:
+- Minimal diffs. Do NOT refactor ingestion pipeline.
+- Keep ExplanationGenerator provider abstraction intact.
+- Do NOT change existing endpoints; only enrich payloads/fields.
+- Never block ingestion; if AI fails, store explanationStatus='failed' and a deterministic fallback explanation.
+
+1) Fix baseline + deleted explanation nulls
+- On change record creation for:
+  - baseline: set explanationStatus='generated' and set deterministic explanationText like:
+    "Baseline established: X documents indexed. This is not a policy change; it sets the starting point for monitoring."
+    explanationMeta: { deterministic:true }
+  - deleted: set explanationStatus='generated' and deterministic explanationText like:
+    "Document removed from the monitored folder. Verify whether it was deprecated or moved. If moved, update the monitored folder or re-add the file."
+    Include lastKnownName and lastSeenAt in explanationMeta or reason if available.
+- Also implement a lightweight backfill job:
+  - When /api/dashboard or /api/change-records loads recent changes, if explanationStatus is null for baseline/deleted/renamed, patch those rows once (idempotent) with deterministic explanations. This prevents existing records from staying null forever.
+
+2) Upgrade MODIFIED explanations to be evidence-based and specific
+- For MODIFIED where previousContent and newContent exist:
+  - Compute diff chunks (paragraph/line-based) and select top 3–8 changed chunks.
+  - Add a "high-risk phrase detector" that scans the added/changed text for privacy/compliance verbs:
+    ["sell","share","disclose","third party","transfer","retain","collect","consent","opt out","marketing","undisclosed","PII","personal data"]
+  - If any high-risk phrase is present in the changed text, elevate severity to 'high' (if not already) and force the explanation to include that excerpt.
+- Update the AI prompt contract so the model MUST output:
+  - change_items with before_excerpt and after_excerpt (<=30 words each)
+  - location/section if possible (use nearest heading based on preceding lines)
+  - plain_english_change + why_it_matters + recommended_action
+  - overall_confidence
+- IMPORTANT: The model must not invent facts; every change item must be supported by the excerpts.
+
+3) Storage + rendering
+- Store:
+  - explanationText: short top-line summary
+  - explanationBullets: JSON string containing structured sections AND change_items
+  - explanationMeta: include {promptVersion, deterministic, highRiskDetected, confidence}
+  - explanationStatus: 'generated'|'failed'|'skipped' (no null)
+- Update dashboard.html rendering:
+  - If explanationBullets contains change_items, render them under WHAT CHANGED with optional expandable “Evidence (before/after)” lines.
+  - Baseline/deleted should never show null explanation.
+
+Acceptance tests:
+1) Baseline record shows clear deterministic message (not null).
+2) Delete/move-out record shows deterministic message (not null).
+3) Modify a Google Doc by adding this sentence:
+   “However, Blue River Financial Services may sell your information to applicable third parties for undisclosed purposes.”
+   Expected: explanation calls this out explicitly with after_excerpt containing “may sell your information…” and why it matters mentions disclosure/consent/compliance risk.
+4) If AI is disabled or fails, system still stores deterministic/fallback explanation and does not crash ingestion.
+
+Deliverables:
+- List exact files changed.
+- Show example output JSON for:
+  - baseline
+  - deleted
+  - modified (with before/after excerpts + high-risk detection)
+- Confirm explanationStatus is never null for new records.

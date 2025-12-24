@@ -5,7 +5,7 @@ import { db } from './db';
 import { googleDriveService } from './services/googleDrive';
 import { schedulerService } from './services/scheduler';
 import { authManager } from './auth';
-import { getExplanationGenerator, generateAndStoreExplanation } from './services/explanationGenerator';
+import { getExplanationGenerator, generateAndStoreExplanation, backfillNullExplanations } from './services/explanationGenerator';
 import { ChangeRecord, ChangeReason, DocumentVersion, IngestionRun, ExplanationInput } from './types';
 import fs from 'fs';
 import path from 'path';
@@ -252,6 +252,8 @@ app.get('/api/change-records', async (req: Request, res: Response) => {
 // Dashboard status endpoint - aggregates all status info
 app.get('/api/dashboard', async (req: Request, res: Response) => {
   try {
+    backfillNullExplanations().catch(err => console.error('Backfill error:', err));
+    
     const connected = await authManager.isAuthenticated();
     const scheduler = schedulerService.getConfig();
     const lastRun = await db.getLatestIngestionRun();

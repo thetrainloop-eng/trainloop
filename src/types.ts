@@ -41,10 +41,22 @@ export interface ChangeReason {
   baselineDocCount?: number;
 }
 
+export interface ChangeItem {
+  change_type: 'added' | 'removed' | 'modified';
+  location: string | null;
+  before_excerpt: string | null;
+  after_excerpt: string | null;
+  plain_english_change: string;
+  why_it_matters: string;
+  recommended_action: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
 export interface ExplanationBullets {
   what_changed: string[];
   why_it_matters: string[];
   recommended_actions: string[];
+  change_items?: ChangeItem[];
 }
 
 export interface ExplanationMeta {
@@ -53,6 +65,9 @@ export interface ExplanationMeta {
   inputsUsed?: string[];
   confidence?: 'low' | 'medium' | 'high';
   deterministic?: boolean;
+  highRiskDetected?: boolean;
+  highRiskPhrases?: string[];
+  skippedAI?: boolean;
 }
 
 export interface ChangeRecord {

@@ -154,6 +154,44 @@
     .explanation-section-title { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
     .explanation-bullets { padding-left: 16px; margin: 0; }
     .explanation-bullets li { margin-bottom: 3px; color: #444; }
+    .change-items { margin-top: 12px; }
+    .change-item-card {
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+    .change-item-card.high-risk { border-left: 3px solid #f44336; background: #fff8f8; }
+    .change-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .change-item-type {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .change-item-type.added { background: #e8f5e9; color: #2e7d32; }
+    .change-item-type.removed { background: #ffebee; color: #c62828; }
+    .change-item-type.modified { background: #fff3e0; color: #e65100; }
+    .change-item-location { font-size: 11px; color: #666; }
+    .change-item-description { font-size: 13px; color: #333; margin-bottom: 6px; }
+    .evidence-toggle {
+      font-size: 11px;
+      color: #667eea;
+      cursor: pointer;
+      display: inline-block;
+      margin-top: 4px;
+    }
+    .evidence-toggle:hover { text-decoration: underline; }
+    .evidence-content { display: none; margin-top: 8px; font-size: 12px; }
+    .evidence-content.show { display: block; }
+    .evidence-box { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 6px; }
+    .evidence-label { font-size: 10px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+    .evidence-text { font-family: 'Monaco', 'Consolas', monospace; font-size: 11px; color: #333; white-space: pre-wrap; }
+    .evidence-before { border-left: 3px solid #f44336; }
+    .evidence-after { border-left: 3px solid #4caf50; }
+    .high-risk-alert { background: #ffebee; color: #c62828; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-size: 12px; font-weight: 500; }
     .config-form { margin-top: 15px; }
     .form-group { margin-bottom: 15px; }
     .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 5px; }
@@ -399,6 +437,7 @@
       }
 
       let bullets = null;
+      let meta = null;
       if (change.explanationBullets) {
         try {
           const parsed = typeof change.explanationBullets === 'string' 
@@ -414,14 +453,66 @@
           bullets = null;
         }
       }
+      
+      if (change.explanationMeta) {
+        try {
+          meta = typeof change.explanationMeta === 'string' 
+            ? JSON.parse(change.explanationMeta) 
+            : change.explanationMeta;
+        } catch (e) {
+          meta = null;
+        }
+      }
 
       let html = `<div class="explanation-content" id="explanation-${index}">`;
+      
+      if (meta && meta.highRiskDetected) {
+        const phrases = meta.highRiskPhrases ? meta.highRiskPhrases.slice(0, 3).join(', ') : 'privacy/compliance';
+        html += `<div class="high-risk-alert">⚠️ HIGH RISK: Contains ${phrases} language - requires immediate review</div>`;
+      }
       
       if (change.explanationText) {
         html += `<div class="explanation-text">${change.explanationText}</div>`;
       }
 
-      if (bullets) {
+      if (bullets && bullets.change_items && Array.isArray(bullets.change_items) && bullets.change_items.length > 0) {
+        html += `<div class="change-items">
+          <div class="explanation-section-title">Specific Changes (${bullets.change_items.length})</div>`;
+        
+        bullets.change_items.forEach((item, i) => {
+          const hasHighRisk = item.why_it_matters && item.why_it_matters.includes('HIGH RISK');
+          const cardClass = hasHighRisk ? 'change-item-card high-risk' : 'change-item-card';
+          
+          html += `<div class="${cardClass}">
+            <div class="change-item-header">
+              <span class="change-item-type ${item.change_type}">${item.change_type}</span>
+              ${item.location ? `<span class="change-item-location">Section: ${item.location}</span>` : ''}
+            </div>
+            <div class="change-item-description">${item.plain_english_change}</div>
+            <div style="font-size:12px;color:#666;margin-bottom:4px;">${item.why_it_matters}</div>
+            <div style="font-size:12px;color:#1565c0;">→ ${item.recommended_action}</div>`;
+          
+          if (item.before_excerpt || item.after_excerpt) {
+            html += `<span class="evidence-toggle" onclick="toggleEvidence(${index}, ${i})">Show evidence</span>
+              <div class="evidence-content" id="evidence-${index}-${i}">`;
+            if (item.before_excerpt) {
+              html += `<div class="evidence-box evidence-before">
+                <div class="evidence-label">Before</div>
+                <div class="evidence-text">${item.before_excerpt}</div>
+              </div>`;
+            }
+            if (item.after_excerpt) {
+              html += `<div class="evidence-box evidence-after">
+                <div class="evidence-label">After</div>
+                <div class="evidence-text">${item.after_excerpt}</div>
+              </div>`;
+            }
+            html += `</div>`;
+          }
+          html += `</div>`;
+        });
+        html += `</div>`;
+      } else if (bullets) {
         if (bullets.what_changed && Array.isArray(bullets.what_changed) && bullets.what_changed.length > 0) {
           html += `<div class="explanation-section">
             <div class="explanation-section-title">What Changed</div>
@@ -444,6 +535,13 @@
 
       html += '</div>';
       return html;
+    }
+    
+    function toggleEvidence(changeIndex, itemIndex) {
+      const el = document.getElementById(`evidence-${changeIndex}-${itemIndex}`);
+      if (el) {
+        el.classList.toggle('show');
+      }
     }
 
     async function startScheduler() {

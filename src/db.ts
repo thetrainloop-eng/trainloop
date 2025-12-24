@@ -465,6 +465,21 @@ export class Database {
     });
   }
 
+  async getChangeRecordsWithNullExplanations(): Promise<ChangeRecord[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        `SELECT * FROM change_records 
+         WHERE explanationStatus IS NULL 
+         ORDER BY detectedAt DESC 
+         LIMIT 100`,
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve((rows as ChangeRecord[]) || []);
+        }
+      );
+    });
+  }
+
   close(): void {
     this.db.close();
   }

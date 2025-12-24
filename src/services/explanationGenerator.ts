@@ -4,9 +4,11 @@ import {
   ExplanationInput, 
   ExplanationOutput, 
   ExplanationBullets, 
-  ExplanationMeta 
+  ExplanationMeta,
+  ChangeItem
 } from '../types';
 import { db } from '../db';
+import { computeTextDiff, DiffResult } from './diffHelper';
 
 export interface IExplanationGenerator {
   generateExplanation(input: ExplanationInput): Promise<ExplanationOutput>;
@@ -25,15 +27,16 @@ function parseReason(record: ChangeRecord): ChangeReason {
 function createDeterministicExplanation(
   text: string,
   bullets: ExplanationBullets,
-  confidence: 'low' | 'medium' | 'high' = 'high'
+  meta: Partial<ExplanationMeta> = {}
 ): ExplanationOutput {
   return {
     text,
     bullets,
     meta: {
       deterministic: true,
-      confidence,
-      promptVersion: 'deterministic-v1',
+      confidence: meta.confidence || 'high',
+      promptVersion: 'deterministic-v2',
+      ...meta,
     },
   };
 }
@@ -50,11 +53,20 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
     switch (changeRecord.changeType) {
       case 'baseline':
         return createDeterministicExplanation(
-          `Baseline established with ${reason.baselineDocCount || 0} documents indexed for change tracking.`,
+          `Baseline established: ${reason.baselineDocCount || 0} documents indexed. This is the starting point for change monitoring.`,
           {
-            what_changed: ['Initial document inventory captured', 'All documents indexed for future change detection'],
-            why_it_matters: ['Establishes baseline for detecting future policy and procedure updates'],
-            recommended_actions: ['No action required - monitoring is now active'],
+            what_changed: [
+              `Initial document inventory captured (${reason.baselineDocCount || 0} documents)`,
+              'All documents indexed for future change detection'
+            ],
+            why_it_matters: [
+              'Establishes baseline for detecting future policy and procedure updates',
+              'No policy changes occurred - this is the monitoring setup'
+            ],
+            recommended_actions: [
+              'No action required - monitoring is now active',
+              'Future changes will be tracked and explained'
+            ],
           }
         );
 
@@ -78,8 +90,9 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
 
       case 'deleted':
         const deletedName = reason.lastKnownName || documentName || 'Unknown document';
+        const lastSeen = reason.lastSeenAt ? ` (last seen: ${new Date(reason.lastSeenAt).toLocaleDateString()})` : '';
         return createDeterministicExplanation(
-          `Document "${deletedName}" was removed from the tracked folder.`,
+          `Document "${deletedName}" removed from the monitored folder.${lastSeen}`,
           {
             what_changed: [`"${deletedName}" is no longer in the monitored folder`],
             why_it_matters: [
@@ -93,7 +106,7 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
               'Update training materials if document is deprecated',
             ],
           },
-          'medium'
+          { confidence: 'medium' }
         );
 
       case 'created':
@@ -110,7 +123,7 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
             why_it_matters: ['Review may be required'],
             recommended_actions: ['Review the document for details'],
           },
-          'low'
+          { confidence: 'low' }
         );
     }
   }
@@ -137,7 +150,7 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
             'Communicate new document availability to relevant teams',
           ],
         },
-        'medium'
+        { confidence: 'medium' }
       );
     }
 
@@ -154,7 +167,7 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
           'Assess if training materials need updates',
         ],
       },
-      'low'
+      { confidence: 'low' }
     );
   }
 
@@ -168,27 +181,8 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
     const hasNew = newContent && !newContent.startsWith('[') && newContent.length > 50;
 
     if (hasPrevious && hasNew) {
-      const summary = this.computeBasicDiffSummary(previousContent!, newContent!);
-      return createDeterministicExplanation(
-        `Document "${name}" content has been modified. ${summary}`,
-        {
-          what_changed: [
-            `Content of "${name}" has changed`,
-            summary,
-          ],
-          why_it_matters: [
-            'Policy or procedure changes may affect compliance requirements',
-            'Training materials may need to reflect new content',
-            'Staff awareness of changes may be required',
-          ],
-          recommended_actions: [
-            'Review the updated document to understand changes',
-            'Assess impact on existing training and onboarding',
-            'Communicate significant changes to affected teams',
-          ],
-        },
-        'medium'
-      );
+      const diffResult = computeTextDiff(previousContent!, newContent!);
+      return this.generateEvidenceBasedExplanation(name, diffResult);
     }
 
     return createDeterministicExplanation(
@@ -204,26 +198,112 @@ export class DeterministicExplanationGenerator implements IExplanationGenerator 
           'Compare with previous version if available',
         ],
       },
-      'low'
+      { confidence: 'low' }
     );
   }
 
-  protected computeBasicDiffSummary(previous: string, current: string): string {
-    const prevLength = previous.length;
-    const currLength = current.length;
-    const diff = currLength - prevLength;
+  protected generateEvidenceBasedExplanation(
+    documentName: string,
+    diffResult: DiffResult
+  ): ExplanationOutput {
+    const { chunks, summary, highRiskPhrases, hasHighRiskChanges } = diffResult;
+    
+    const changeItems: ChangeItem[] = chunks.map(chunk => {
+      let plainEnglish = '';
+      let whyMatters = '';
+      let action = '';
+      
+      if (chunk.type === 'added') {
+        plainEnglish = chunk.location 
+          ? `New content added in "${chunk.location}" section`
+          : 'New content added to document';
+        whyMatters = 'New policy language may introduce new requirements or obligations';
+        action = 'Review the added content for compliance implications';
+      } else if (chunk.type === 'removed') {
+        plainEnglish = chunk.location
+          ? `Content removed from "${chunk.location}" section`
+          : 'Content removed from document';
+        whyMatters = 'Removed language may indicate deprecated procedures or reduced protections';
+        action = 'Verify removal was intentional and update related training';
+      } else {
+        plainEnglish = chunk.location
+          ? `Content modified in "${chunk.location}" section`
+          : 'Content was revised';
+        whyMatters = 'Modified language may change requirements, timelines, or responsibilities';
+        action = 'Compare before and after text to understand the change';
+      }
 
-    if (Math.abs(diff) < 50) {
-      return 'Minor text edits detected.';
-    } else if (diff > 500) {
-      return 'Significant content added.';
-    } else if (diff < -500) {
-      return 'Significant content removed.';
-    } else if (diff > 0) {
-      return 'Content expanded.';
-    } else {
-      return 'Content reduced.';
+      const hrPhrases = chunk.after ? this.detectHighRiskInText(chunk.after) : [];
+      if (hrPhrases.length > 0) {
+        whyMatters = `HIGH RISK: Contains "${hrPhrases[0]}" language - may affect privacy/compliance`;
+        action = 'Escalate for legal/compliance review immediately';
+      }
+
+      return {
+        change_type: chunk.type,
+        location: chunk.location,
+        before_excerpt: chunk.before,
+        after_excerpt: chunk.after,
+        plain_english_change: plainEnglish,
+        why_it_matters: whyMatters,
+        recommended_action: action,
+        confidence: chunk.location ? 'high' : 'medium',
+      };
+    });
+
+    const whatChanged = changeItems.map(item => item.plain_english_change);
+    if (whatChanged.length === 0) {
+      whatChanged.push(`"${documentName}" content has changed`);
     }
+
+    const whyMatters: string[] = [];
+    if (hasHighRiskChanges) {
+      whyMatters.push(`HIGH RISK: Contains privacy/compliance language (${highRiskPhrases.slice(0, 3).join(', ')})`);
+    }
+    whyMatters.push('Policy modifications may affect compliance requirements');
+    if (summary.added > 0) whyMatters.push(`${summary.added} new section(s) added`);
+    if (summary.removed > 0) whyMatters.push(`${summary.removed} section(s) removed`);
+
+    const recommendedActions = [
+      'Review all changed sections carefully',
+      'Assess impact on training and onboarding materials',
+    ];
+    if (hasHighRiskChanges) {
+      recommendedActions.unshift('Escalate to legal/compliance team for review');
+    }
+
+    const titlePrefix = hasHighRiskChanges ? '⚠️ HIGH RISK: ' : '';
+    const title = `${titlePrefix}"${documentName}" modified with ${chunks.length} specific change(s)`;
+
+    return createDeterministicExplanation(
+      title,
+      {
+        what_changed: whatChanged,
+        why_it_matters: whyMatters,
+        recommended_actions: recommendedActions,
+        change_items: changeItems,
+      },
+      {
+        confidence: changeItems.length > 0 ? 'high' : 'medium',
+        highRiskDetected: hasHighRiskChanges,
+        highRiskPhrases: highRiskPhrases,
+      }
+    );
+  }
+
+  protected detectHighRiskInText(text: string): string[] {
+    const phrases = [
+      'sell', 'share', 'disclose', 'third party', 'transfer', 'retain', 'collect',
+      'consent', 'opt out', 'opt-out', 'marketing', 'undisclosed', 'PII', 'personal data'
+    ];
+    const found: string[] = [];
+    const lowerText = text.toLowerCase();
+    for (const phrase of phrases) {
+      if (lowerText.includes(phrase.toLowerCase())) {
+        found.push(phrase);
+      }
+    }
+    return [...new Set(found)];
   }
 }
 
@@ -259,7 +339,7 @@ export class ReplitAIExplanationGenerator extends DeterministicExplanationGenera
   async generateExplanation(input: ExplanationInput): Promise<ExplanationOutput> {
     const { changeRecord } = input;
 
-    if (changeRecord.changeType === 'baseline' || changeRecord.changeType === 'renamed') {
+    if (changeRecord.changeType === 'baseline' || changeRecord.changeType === 'renamed' || changeRecord.changeType === 'deleted') {
       return super.generateExplanation(input);
     }
 
@@ -271,53 +351,77 @@ export class ReplitAIExplanationGenerator extends DeterministicExplanationGenera
       return await this.generateAIExplanation(input);
     } catch (error) {
       console.error('AI explanation failed, falling back to deterministic:', error);
-      throw error;
+      return super.generateExplanation(input);
     }
   }
 
   private async generateAIExplanation(input: ExplanationInput): Promise<ExplanationOutput> {
     const { changeRecord, documentName, previousContent, newContent } = input;
     
-    let contentContext = '';
-    if (changeRecord.changeType === 'created' && newContent) {
+    let diffContext = '';
+    let diffChunks: any[] = [];
+    let diffResult: DiffResult | null = null;
+    
+    if (changeRecord.changeType === 'modified' && previousContent && newContent) {
+      diffResult = computeTextDiff(previousContent, newContent, 5);
+      diffChunks = diffResult.chunks;
+      
+      if (diffChunks.length > 0) {
+        diffContext = `\nDiff Chunks (prioritized by importance):\n${JSON.stringify(diffChunks, null, 2)}`;
+      } else {
+        const prevTrunc = previousContent.substring(0, 1000);
+        const newTrunc = newContent.substring(0, 1000);
+        diffContext = `\nPrevious content (truncated):\n${prevTrunc}\n\nNew content (truncated):\n${newTrunc}`;
+      }
+    } else if (changeRecord.changeType === 'created' && newContent) {
       const truncated = newContent.substring(0, 2000);
-      contentContext = `New document content (truncated):\n${truncated}`;
-    } else if (changeRecord.changeType === 'modified' && previousContent && newContent) {
-      const prevTrunc = previousContent.substring(0, 1000);
-      const newTrunc = newContent.substring(0, 1000);
-      contentContext = `Previous content (truncated):\n${prevTrunc}\n\nNew content (truncated):\n${newTrunc}`;
-    } else if (changeRecord.changeType === 'deleted') {
-      contentContext = `Document was removed from the tracked folder.`;
+      diffContext = `\nNew document content (truncated):\n${truncated}`;
     }
 
-    const prompt = `You are analyzing a document change for an organization's policy and procedure tracking system. 
-Provide a plain-English explanation for stakeholders (HR, compliance, operations managers).
+    const prompt = `You are analyzing a document change for an organization's policy and procedure tracking system.
+Provide evidence-based, specific explanations for stakeholders (HR, compliance, operations managers).
 
 Document: "${documentName || 'Unknown'}"
 Change Type: ${changeRecord.changeType}
-${contentContext}
+${diffContext}
 
-Respond with JSON only:
+IMPORTANT: You MUST output valid JSON matching this EXACT schema:
 {
-  "title": "Brief one-line summary",
-  "what_changed": ["bullet 1", "bullet 2", "bullet 3"],
-  "why_it_matters": ["bullet 1", "bullet 2"],
-  "recommended_actions": ["action 1", "action 2"],
-  "confidence": "low" | "medium" | "high"
+  "title": "Brief one-line summary (include ⚠️ HIGH RISK prefix if privacy/compliance terms detected)",
+  "change_items": [
+    {
+      "change_type": "added" | "removed" | "modified",
+      "location": "Section name if known, or null",
+      "before_excerpt": "Original text excerpt (<=30 words) or null if added",
+      "after_excerpt": "New text excerpt (<=30 words) or null if removed",
+      "plain_english_change": "What specifically changed in plain language",
+      "why_it_matters": "Why this matters for compliance/training",
+      "recommended_action": "Specific action to take",
+      "confidence": "low" | "medium" | "high"
+    }
+  ],
+  "summary": {
+    "what_changed": ["bullet 1", "bullet 2"],
+    "why_it_matters": ["bullet 1", "bullet 2"],
+    "recommended_actions": ["action 1", "action 2"]
+  },
+  "overall_confidence": "low" | "medium" | "high",
+  "high_risk_detected": true | false
 }
 
-Rules:
-- Keep bullets concise (under 20 words each)
-- Use plain language, no jargon
-- Be specific about what changed
-- If content is unclear or truncated, say "may" or "appears to"
-- 2-4 bullets per section`;
+RULES:
+- Every change_item MUST have before_excerpt and/or after_excerpt from the actual text
+- Do NOT invent facts - only describe what you see in the excerpts
+- Flag any text containing: sell, share, disclose, third party, transfer, consent, opt out, marketing, undisclosed, PII, personal data
+- Keep excerpts under 30 words
+- 3-8 change_items max, prioritize most important changes
+- If you cannot identify specific changes, say so honestly`;
 
     const response = await this.openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
-      max_completion_tokens: 500,
+      max_completion_tokens: 1000,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -330,16 +434,19 @@ Rules:
     return {
       text: parsed.title || 'Document change detected',
       bullets: {
-        what_changed: parsed.what_changed || [],
-        why_it_matters: parsed.why_it_matters || [],
-        recommended_actions: parsed.recommended_actions || [],
+        what_changed: parsed.summary?.what_changed || [],
+        why_it_matters: parsed.summary?.why_it_matters || [],
+        recommended_actions: parsed.summary?.recommended_actions || [],
+        change_items: parsed.change_items || [],
       },
       meta: {
         model: 'gpt-4o-mini',
-        promptVersion: 'v1',
-        inputsUsed: ['documentName', 'changeType', contentContext ? 'content' : undefined].filter(Boolean) as string[],
-        confidence: parsed.confidence || 'medium',
+        promptVersion: 'evidence-v2',
+        inputsUsed: ['documentName', 'changeType', 'diffChunks'],
+        confidence: parsed.overall_confidence || 'medium',
         deterministic: false,
+        highRiskDetected: parsed.high_risk_detected || false,
+        highRiskPhrases: diffResult?.highRiskPhrases || [],
       },
     };
   }
@@ -353,43 +460,93 @@ export async function generateAndStoreExplanation(
   const startTime = Date.now();
   
   try {
-    if (!generator.isEnabled() && 
-        input.changeRecord.changeType !== 'baseline' && 
-        input.changeRecord.changeType !== 'renamed') {
-      const deterministicGen = new DeterministicExplanationGenerator();
-      const output = await deterministicGen.generateExplanation(input);
-      
-      await db.updateChangeRecordExplanation(changeRecordId, {
-        explanationText: output.text,
-        explanationBullets: JSON.stringify(output.bullets),
-        explanationMeta: JSON.stringify({ ...output.meta, skippedAI: true }),
-        explanationStatus: 'skipped',
-        explainedAt: new Date().toISOString(),
-      });
-      return;
-    }
-
     const output = await generator.generateExplanation(input);
+    
+    const status = generator.isEnabled() || 
+      input.changeRecord.changeType === 'baseline' || 
+      input.changeRecord.changeType === 'renamed' ||
+      input.changeRecord.changeType === 'deleted'
+        ? 'generated' 
+        : 'skipped';
     
     await db.updateChangeRecordExplanation(changeRecordId, {
       explanationText: output.text,
       explanationBullets: JSON.stringify(output.bullets),
       explanationMeta: JSON.stringify(output.meta),
-      explanationStatus: 'generated',
+      explanationStatus: status,
       explainedAt: new Date().toISOString(),
     });
 
-    console.log(`✅ Explanation generated for ${changeRecordId} in ${Date.now() - startTime}ms`);
+    console.log(`✅ Explanation ${status} for ${changeRecordId} in ${Date.now() - startTime}ms`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`❌ Explanation failed for ${changeRecordId}:`, errorMessage);
     
-    await db.updateChangeRecordExplanation(changeRecordId, {
-      explanationStatus: 'failed',
-      explanationError: errorMessage,
-      explainedAt: new Date().toISOString(),
-    });
+    try {
+      const fallbackGen = new DeterministicExplanationGenerator();
+      const fallbackOutput = await fallbackGen.generateExplanation(input);
+      
+      await db.updateChangeRecordExplanation(changeRecordId, {
+        explanationText: fallbackOutput.text,
+        explanationBullets: JSON.stringify(fallbackOutput.bullets),
+        explanationMeta: JSON.stringify({ ...fallbackOutput.meta, fallbackFromError: true }),
+        explanationStatus: 'generated',
+        explanationError: `AI failed: ${errorMessage}`,
+        explainedAt: new Date().toISOString(),
+      });
+      console.log(`✅ Fallback explanation stored for ${changeRecordId}`);
+    } catch (fallbackError) {
+      await db.updateChangeRecordExplanation(changeRecordId, {
+        explanationStatus: 'failed',
+        explanationError: errorMessage,
+        explainedAt: new Date().toISOString(),
+      });
+    }
   }
+}
+
+export async function backfillNullExplanations(): Promise<number> {
+  const records = await db.getChangeRecordsWithNullExplanations();
+  let backfilled = 0;
+  
+  const generator = new DeterministicExplanationGenerator();
+  
+  for (const record of records) {
+    try {
+      let reason: ChangeReason = {};
+      if (record.reason) {
+        try {
+          reason = JSON.parse(record.reason);
+        } catch {}
+      }
+      
+      const input: ExplanationInput = {
+        changeRecord: record,
+        documentName: reason.lastKnownName || reason.newName,
+        reason,
+      };
+      
+      const output = await generator.generateExplanation(input);
+      
+      await db.updateChangeRecordExplanation(record.id, {
+        explanationText: output.text,
+        explanationBullets: JSON.stringify(output.bullets),
+        explanationMeta: JSON.stringify({ ...output.meta, backfilled: true }),
+        explanationStatus: 'generated',
+        explainedAt: new Date().toISOString(),
+      });
+      
+      backfilled++;
+    } catch (err) {
+      console.error(`Failed to backfill explanation for ${record.id}:`, err);
+    }
+  }
+  
+  if (backfilled > 0) {
+    console.log(`📋 Backfilled ${backfilled} null explanation records`);
+  }
+  
+  return backfilled;
 }
 
 let explanationGeneratorInstance: IExplanationGenerator | null = null;
