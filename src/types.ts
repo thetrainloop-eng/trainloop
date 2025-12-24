@@ -28,6 +28,7 @@ export interface DocumentVersion {
 }
 
 export type ChangeSeverity = 'low' | 'medium' | 'high';
+export type ExplanationStatus = 'pending' | 'generated' | 'failed' | 'skipped';
 
 export interface ChangeReason {
   contentChanged?: boolean;
@@ -40,6 +41,20 @@ export interface ChangeReason {
   baselineDocCount?: number;
 }
 
+export interface ExplanationBullets {
+  what_changed: string[];
+  why_it_matters: string[];
+  recommended_actions: string[];
+}
+
+export interface ExplanationMeta {
+  model?: string;
+  promptVersion?: string;
+  inputsUsed?: string[];
+  confidence?: 'low' | 'medium' | 'high';
+  deterministic?: boolean;
+}
+
 export interface ChangeRecord {
   id: string;
   documentId?: string;
@@ -50,4 +65,24 @@ export interface ChangeRecord {
   summary?: string;
   reason?: string;
   severity?: ChangeSeverity;
+  explanationText?: string;
+  explanationBullets?: string;
+  explanationMeta?: string;
+  explanationStatus?: ExplanationStatus;
+  explanationError?: string;
+  explainedAt?: string;
+}
+
+export interface ExplanationInput {
+  changeRecord: ChangeRecord;
+  documentName?: string;
+  previousContent?: string;
+  newContent?: string;
+  reason?: ChangeReason;
+}
+
+export interface ExplanationOutput {
+  text: string;
+  bullets: ExplanationBullets;
+  meta: ExplanationMeta;
 }

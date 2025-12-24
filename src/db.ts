@@ -91,6 +91,12 @@ export class Database {
     // Add columns if they don't exist (for existing DBs)
     await run(`ALTER TABLE change_records ADD COLUMN reason TEXT`).catch(() => {});
     await run(`ALTER TABLE change_records ADD COLUMN severity TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explanationText TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explanationBullets TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explanationMeta TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explanationStatus TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explanationError TEXT`).catch(() => {});
+    await run(`ALTER TABLE change_records ADD COLUMN explainedAt TEXT`).catch(() => {});
 
     // Auth tokens table (stores Google OAuth token)
     await run(`
@@ -334,6 +340,44 @@ export class Database {
         if (err) reject(err);
         else resolve((rows as any[]) || []);
       });
+    });
+  }
+
+  async updateChangeRecordExplanation(
+    id: string,
+    explanation: {
+      explanationText?: string;
+      explanationBullets?: string;
+      explanationMeta?: string;
+      explanationStatus: string;
+      explanationError?: string;
+      explainedAt?: string;
+    }
+  ): Promise<void> {
+    const stmt = this.db.prepare(
+      `UPDATE change_records SET 
+        explanationText = ?,
+        explanationBullets = ?,
+        explanationMeta = ?,
+        explanationStatus = ?,
+        explanationError = ?,
+        explainedAt = ?
+       WHERE id = ?`
+    );
+    return new Promise((resolve, reject) => {
+      stmt.run(
+        explanation.explanationText || null,
+        explanation.explanationBullets || null,
+        explanation.explanationMeta || null,
+        explanation.explanationStatus,
+        explanation.explanationError || null,
+        explanation.explainedAt || null,
+        id,
+        function(err: Error | null) {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
     });
   }
 

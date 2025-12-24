@@ -1,0 +1,111 @@
+We are starting Slice 2: Plain-English explanations for detected policy/document changes.
+
+IMPORTANT ARCHITECTURAL REQUIREMENT (DO NOT IGNORE):
+Explanation generation MUST be isolated behind a single service/interface so the AI provider can be swapped later.
+- Do NOT couple explanation generation directly to ingestion logic.
+- Do NOT scatter AI calls across files.
+- The rest of the app should not know whether explanations come from Replit AI, OpenAI, Anthropic, etc.
+- Replit AI Integrations may be used for now, but ONLY behind this abstraction.
+
+Current system (do not break):
+- Google Drive OAuth connection works.
+- Ingestion runs on demand + scheduled.
+- Change detection works: created / modified / renamed / deleted / baseline.
+- We store versions + hashes; for Google Docs we store exported text; PDFs/DOCX can be placeholders.
+- Dashboard consumes /api/dashboard and shows recent changes.
+
+Goal:
+For each change record, generate a plain-English explanation that is useful to onboarding leaders, operations managers, and compliance stakeholders:
+- What changed (simple terms)
+- Why it matters (impact framing)
+- What to do next (optional recommendation)
+This must work even when only partial content is available.
+
+Constraints:
+- Minimal diffs. No major refactor.
+- Explanations must be generated ONCE at detection time and stored.
+- Do NOT regenerate explanations on dashboard refresh.
+- Avoid heavy compute or large diff libraries.
+- Never block ingestion if explanation generation fails.
+- Add a feature flag env var: EXPLANATIONS_ENABLED=true|false
+  - If missing or false, explanation generation is skipped cleanly.
+- Never log secrets or tokens.
+
+Architecture requirements (MANDATORY):
+- Create a single ExplanationGenerator service/interface, e.g.:
+  - generateExplanation(input): ExplanationOutput
+- Implement one provider-backed implementation:
+  - ReplitAIExplanationGenerator (using Replit AI Integrations)
+- Ingestion logic must call ONLY the interface, not the provider directly.
+- Provider choice must be swappable without touching ingestion logic.
+
+Data model changes:
+Extend change_records with:
+- explanationText (TEXT)
+- explanationBullets (TEXT JSON)
+- explanationMeta (TEXT JSON: model, promptVersion, inputsUsed)
+- explanationStatus ('pending' | 'generated' | 'failed' | 'skipped')
+- explanationError (TEXT nullable)
+- explainedAt (TEXT nullable)
+
+(SQLite dev note: if schema changes are painful, document whether dev DB should be recreated or provide a table-recreation migration.)
+
+Generation logic:
+- Trigger explanation generation immediately after creating a change record.
+- BASELINE and RENAMED changes should use deterministic explanations (no AI inference).
+- CREATED / MODIFIED / DELETED:
+  - If content available, generate explanation.
+  - If content unavailable (PDF/DOCX placeholder), generate a deterministic explanation that explicitly states the limitation.
+
+Change-type behavior:
+RENAMED:
+- Deterministic explanation only.
+- Include oldName → newName.
+- Severity: low.
+
+CREATED:
+- If content available: summarize purpose in 2–3 bullets.
+- If not: recommend review.
+- Severity: medium.
+
+MODIFIED:
+- If content available:
+  - Compare previous vs new content at a high level.
+  - Identify what *kind* of change occurred (process, responsibility, requirement).
+- If not: say content changed but diff unavailable.
+- Severity: high if content changed; low if metadata-only.
+
+DELETED:
+- Explain document removed from tracked folder.
+- Recommend verifying intentional deprecation or relocation.
+- Severity: medium or high (choose one and be consistent).
+
+API / UI updates (minimal):
+- /api/dashboard: extend each change with explanation fields + status.
+- dashboard.html:
+  - Add expand/collapse “View explanation”
+  - Show explanationStatus badges
+  - If pending and EXPLANATIONS_ENABLED=true, show “Generating…”
+- Do NOT redesign layout or add new pages.
+
+Operational requirements:
+- If explanation generation fails:
+  - Set explanationStatus=failed
+  - Store error message
+  - Ingestion must still succeed
+- No overlapping explanation generation per change record.
+
+Acceptance tests:
+1) Rename → explanation generated deterministically, no AI call.
+2) Modify Google Doc → explanation references change at high level.
+3) Create new doc → explanation summarizes purpose.
+4) Delete doc → explanation recommends verification.
+5) Disable EXPLANATIONS_ENABLED → ingestion succeeds, explanations skipped.
+6) Simulate AI failure → explanationStatus=failed, dashboard still loads.
+
+Deliverables:
+- List exact files changed.
+- Show ExplanationGenerator interface.
+- Show provider implementation (Replit AI).
+- Show example change_record with explanation fields populated.
+- Document new env vars.
